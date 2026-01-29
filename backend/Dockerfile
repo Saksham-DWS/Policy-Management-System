@@ -1,11 +1,11 @@
-FROM node:20-alpine AS build
+FROM node:20-bullseye AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN node ./node_modules/esbuild/bin/esbuild _core/index.js --platform=node --packages=external --bundle --format=esm --outdir=dist --alias:@shared=./shared
 
-FROM node:20-alpine AS runner
+FROM node:20-bullseye AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV DISABLE_BACKEND_VITE=true
