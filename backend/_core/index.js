@@ -27,14 +27,19 @@ async function startServer() {
     app.use("/api", createRestRouter());
     const frontendUrl = process.env.FRONTEND_URL?.trim();
     const backendUrl = process.env.BACKEND_URL?.trim();
-    const hasExternalFrontend = Boolean(frontendUrl && backendUrl && frontendUrl !== backendUrl);
+    const hasExternalFrontend = Boolean(frontendUrl) && frontendUrl !== (backendUrl || "");
     const shouldUseViteMiddleware = process.env.NODE_ENV === "development"
         && process.env.DISABLE_BACKEND_VITE !== "true"
         && !hasExternalFrontend;
     if (shouldUseViteMiddleware) {
-        await setupVite(app, server);
+        try {
+            await setupVite(app, server);
+        }
+        catch (error) {
+            logger.warn("[Vite] Failed to start Vite middleware. Skipping.", error?.message || error);
+        }
     }
-    else if (process.env.NODE_ENV !== "development") {
+    else if (process.env.NODE_ENV !== "development" && !hasExternalFrontend) {
         serveStatic(app);
     }
     else {

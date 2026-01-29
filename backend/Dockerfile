@@ -8,6 +8,7 @@ RUN node ./node_modules/esbuild/bin/esbuild _core/index.js --platform=node --pac
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV DISABLE_BACKEND_VITE=true
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
