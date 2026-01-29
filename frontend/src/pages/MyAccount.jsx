@@ -202,9 +202,20 @@ export default function MyAccount() {
                   </div>
                   {redemption.notes && <p className="text-sm text-muted-foreground mt-2">{redemption.notes}</p>}
                   {redemption.processedAt && (
-                    <p className="text-sm text-green-600 mt-2">
-                      Processed on {new Date(redemption.processedAt).toLocaleDateString()}
-                    </p>
+                    <div className="mt-2 space-y-1">
+                      <p className="text-sm text-green-600">
+                        Processed on {new Date(redemption.processedAt).toLocaleDateString()}
+                      </p>
+                      {redemption.transactionReference && (
+                        <p className="text-sm text-muted-foreground">
+                          Transaction Reference:{" "}
+                          <span className="font-mono text-foreground">{redemption.transactionReference}</span>
+                        </p>
+                      )}
+                      {redemption.paymentNotes && (
+                        <p className="text-sm text-muted-foreground">{redemption.paymentNotes}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}

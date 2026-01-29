@@ -230,3 +230,43 @@ export async function sendRedemptionRequestEmail({
     });
     return { success: true };
 }
+
+export async function sendRedemptionProcessedEmail({
+    to,
+    employeeName,
+    amount,
+    transactionReference,
+    processedBy,
+    paymentNotes,
+    redemptionId,
+}) {
+    if (!to) {
+        return { skipped: true, reason: "missing_recipient" };
+    }
+    const transport = getTransport();
+    if (!transport) {
+        console.warn("[Email] SMTP is not configured. Skipping redemption processed email.");
+        return { skipped: true, reason: "smtp_not_configured" };
+    }
+    const { transporter, from } = transport;
+    const subject = "Redemption payment processed";
+    const textLines = [
+        `Hello ${employeeName || ""},`,
+        "",
+        "Your redemption request has been processed.",
+        redemptionId ? `Request ID: ${redemptionId}` : "",
+        `Amount: $${Number(amount || 0).toFixed(2)}`,
+        transactionReference ? `Transaction Reference: ${transactionReference}` : "",
+        processedBy ? `Processed by: ${processedBy}` : "",
+        paymentNotes ? `Notes: ${paymentNotes}` : "",
+        "",
+        "If you have any questions, please contact support.",
+    ].filter(Boolean);
+    await transporter.sendMail({
+        from,
+        to,
+        subject,
+        text: textLines.join("\n"),
+    });
+    return { success: true };
+}

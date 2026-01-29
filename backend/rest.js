@@ -19,6 +19,7 @@ import {
     sendHodFreelancerRequestEmail,
     sendInitiatorFreelancerRejectionEmail,
     sendRedemptionRequestEmail,
+    sendRedemptionProcessedEmail,
 } from "./_core/email.js";
 import { deleteGridFSFile, saveBufferToGridFS, streamGridFSFile } from "./_core/files.js";
 import { buildTimelinePdf } from "./_core/pdf.js";
@@ -2001,6 +2002,7 @@ export function createRestRouter() {
                 paymentNotes: input.paymentNotes,
                 timelineLog,
             });
+            const employee = await db.getUserById(request.userId?.toString?.() || request.userId);
             // Debit is recorded when the redemption request is submitted.
             await db.createAuditLog({
                 userId: ctxUser.id,
@@ -2012,10 +2014,24 @@ export function createRestRouter() {
             await db.createNotification({
                 userId: request.userId,
                 title: "Redemption processed",
-                message: `Your redemption request for $${request.amount.toFixed(2)} has been processed.`,
+                message: `Your redemption request for $${request.amount.toFixed(2)} has been processed. Reference: ${input.transactionReference}`,
                 type: "success",
                 actionUrl: "/my-account",
             });
+            try {
+                await sendRedemptionProcessedEmail({
+                    to: employee?.email,
+                    employeeName: employee?.name,
+                    amount: request.amount,
+                    transactionReference: input.transactionReference,
+                    processedBy: ctxUser?.name || ctxUser?.email,
+                    paymentNotes: input.paymentNotes,
+                    redemptionId: request._id?.toString(),
+                });
+            }
+            catch (error) {
+                console.warn("[Email] Failed to send redemption processed email:", error?.message || error);
+            }
             res.json({ success: true });
         }),
     );
