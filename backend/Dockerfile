@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN node ./node_modules/esbuild/bin/esbuild _core/index.js --platform=node --packages=external --bundle --format=esm --outdir=dist --alias:@shared=./shared
 
 FROM node:20-alpine AS runner
 WORKDIR /app
