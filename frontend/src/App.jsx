@@ -1,0 +1,77 @@
+import { TooltipProvider } from "@/components/ui/tooltip";
+import NotFound from "@/pages/NotFound";
+import { Route, Switch, Redirect } from "wouter";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import DashboardLayout from "./components/DashboardLayout";
+import Login from "./pages/Login";
+import AdminSignup from "./pages/AdminSignup";
+import Dashboard from "./pages/Dashboard";
+import MyAccount from "./pages/MyAccount";
+import EmployeeManagement from "./pages/EmployeeManagement";
+import Transactions from "./pages/Transactions";
+import Reports from "./pages/Reports";
+import AuditLogs from "./pages/AuditLogs";
+import UserManagement from "./pages/UserManagement";
+import Policies from "./pages/Policies";
+import Approvals from "./pages/Approvals";
+import AccountsManager from "./pages/AccountsManager";
+import Profile from "./pages/Profile";
+import Notifications from "./pages/Notifications";
+import { useAuth } from "./_core/hooks/useAuth";
+function Router() {
+    const { isAuthenticated, loading } = useAuth();
+    if (loading) {
+        return (<div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>);
+    }
+    if (!isAuthenticated) {
+        return (<Switch>
+        <Route path="/login" component={Login}/>
+        <Route path="/admin-signup" component={AdminSignup}/>
+        <Route path="*">
+          {() => <Redirect to="/login"/>}
+        </Route>
+      </Switch>);
+    }
+    return (<DashboardLayout>
+      <Switch>
+        <Route path="/" component={Dashboard}/>
+        <Route path="/dashboard" component={Dashboard}/>
+        <Route path="/login">
+          {() => <Redirect to="/"/>}
+        </Route>
+        <Route path="/admin-signup">
+          {() => <Redirect to="/"/>}
+        </Route>
+        <Route path="/my-account" component={MyAccount}/>
+        <Route path="/employees" component={EmployeeManagement}/>
+        <Route path="/transactions" component={Transactions}/>
+        <Route path="/reports" component={Reports}/>
+        <Route path="/notifications" component={Notifications}/>
+        <Route path="/profile" component={Profile}/>
+        <Route path="/audit-logs" component={AuditLogs}/>
+        <Route path="/user-management" component={UserManagement}/>
+        <Route path="/policies" component={Policies}/>
+        <Route path="/approvals" component={Approvals}/>
+        <Route path="/accounts" component={AccountsManager}/>
+        <Route path="/404" component={NotFound}/>
+        <Route component={NotFound}/>
+      </Switch>
+    </DashboardLayout>);
+}
+function App() {
+    return (<ErrorBoundary>
+      <ThemeProvider defaultTheme="light">
+        <TooltipProvider>
+          <Router />
+        </TooltipProvider>
+      </ThemeProvider>
+    </ErrorBoundary>);
+}
+export default App;
+ 
