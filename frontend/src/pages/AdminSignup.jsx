@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, setSessionToken } from "@/lib/api";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
@@ -16,7 +16,10 @@ export default function AdminSignup() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const adminSignupMutation = api.auth.adminSignup.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (data?.token) {
+        setSessionToken(data.token);
+      }
       toast.success("Admin account created. You're signed in!");
       window.location.href = "/";
     },

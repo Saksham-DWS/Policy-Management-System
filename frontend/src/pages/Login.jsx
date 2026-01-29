@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, setSessionToken } from "@/lib/api";
 import { toast } from "sonner";
 import { Link } from "wouter";
 export default function Login() {
@@ -11,7 +11,10 @@ export default function Login() {
     const [password, setPassword] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const loginMutation = api.auth.login.useMutation({
-        onSuccess: () => {
+        onSuccess: (data) => {
+            if (data?.token) {
+                setSessionToken(data.token);
+            }
             toast.success("Login successful!");
             // Reload to get user session
             window.location.href = "/";

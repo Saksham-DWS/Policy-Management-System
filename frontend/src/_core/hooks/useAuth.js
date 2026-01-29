@@ -1,5 +1,5 @@
 import { getLoginUrl } from "@/const";
-import { ApiError, api, buildQueryKey } from "@/lib/api";
+import { ApiError, api, buildQueryKey, setSessionToken } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo } from "react";
 export function useAuth(options) {
@@ -25,6 +25,7 @@ export function useAuth(options) {
             throw error;
         }
         finally {
+            setSessionToken(null);
             queryClient.setQueryData(buildQueryKey("auth.me", undefined), null);
             await queryClient.invalidateQueries({ queryKey: ["auth.me"] });
         }

@@ -337,6 +337,7 @@ export function createRestRouter() {
             res.cookie(COOKIE_NAME, token, cookieOptions);
             res.json({
                 success: true,
+                token,
                 user: { id: user._id.toString(), email: user.email, name: user.name, role: user.role },
             });
         }),
@@ -384,6 +385,7 @@ export function createRestRouter() {
             res.cookie(COOKIE_NAME, token, cookieOptions);
             res.json({
                 success: true,
+                token,
                 user: { id: user._id.toString(), email: user.email, name: user.name, role: user.role },
             });
         }),

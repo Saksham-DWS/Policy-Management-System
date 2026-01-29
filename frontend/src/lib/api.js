@@ -9,6 +9,27 @@ export class ApiError extends Error {
     }
 }
 
+const SESSION_TOKEN_KEY = "ims_session_token";
+
+export const getSessionToken = () => {
+    if (typeof window === "undefined") {
+        return null;
+    }
+    return window.localStorage.getItem(SESSION_TOKEN_KEY);
+};
+
+export const setSessionToken = (token) => {
+    if (typeof window === "undefined") {
+        return;
+    }
+    if (token) {
+        window.localStorage.setItem(SESSION_TOKEN_KEY, token);
+    }
+    else {
+        window.localStorage.removeItem(SESSION_TOKEN_KEY);
+    }
+};
+
 const API_BASE = (import.meta?.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
 const buildUrl = (path, query) => {
@@ -46,6 +67,10 @@ export const buildQueryKey = (key, input) => [key, input ?? null];
 const request = async (path, { method = "GET", body, query } = {}) => {
     const url = buildUrl(path, query);
     const headers = {};
+    const sessionToken = getSessionToken();
+    if (sessionToken) {
+        headers.Authorization = `Bearer ${sessionToken}`;
+    }
     let payload;
     if (body !== undefined) {
         headers["Content-Type"] = "application/json";
@@ -85,9 +110,15 @@ const uploadFiles = async (path, files) => {
             formData.append("files", file);
         }
     });
+    const headers = {};
+    const sessionToken = getSessionToken();
+    if (sessionToken) {
+        headers.Authorization = `Bearer ${sessionToken}`;
+    }
     const response = await fetch(buildUrl(path), {
         method: "POST",
         credentials: "include",
+        headers,
         body: formData,
     });
     const contentType = response.headers.get("content-type") || "";

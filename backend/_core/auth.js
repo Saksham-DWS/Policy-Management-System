@@ -25,13 +25,20 @@ const getSessionSecret = () => {
 export async function authenticateRequest(req) {
     const cookies = parseCookies(req.headers.cookie);
     const sessionCookie = cookies.get(COOKIE_NAME);
-    if (!sessionCookie) {
-        throw ForbiddenError("No session cookie");
+    let sessionToken = sessionCookie;
+    if (!sessionToken) {
+        const authHeader = req.headers.authorization;
+        if (typeof authHeader === "string" && authHeader.toLowerCase().startsWith("bearer ")) {
+            sessionToken = authHeader.slice(7).trim();
+        }
+    }
+    if (!sessionToken) {
+        throw ForbiddenError("No session token");
     }
     let payload;
     try {
         const secretKey = getSessionSecret();
-        ({ payload } = await jwtVerify(sessionCookie, secretKey, {
+        ({ payload } = await jwtVerify(sessionToken, secretKey, {
             algorithms: ["HS256"],
         }));
     }
