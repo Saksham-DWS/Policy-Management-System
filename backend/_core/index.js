@@ -10,6 +10,35 @@ async function startServer() {
     await connectDB();
     const app = express();
     const server = createServer(app);
+    const rawOrigins = (process.env.CORS_ORIGINS || "")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+    const allowedOrigins = rawOrigins.map((origin) => origin.replace(/\/+$/, ""));
+    app.use((req, res, next) => {
+        const origin = req.headers.origin;
+        if (origin) {
+            const normalizedOrigin = origin.replace(/\/+$/, "");
+            if (allowedOrigins.length === 0 || allowedOrigins.includes(normalizedOrigin)) {
+                res.header("Access-Control-Allow-Origin", origin);
+                res.header("Vary", "Origin");
+            }
+        }
+        res.header("Access-Control-Allow-Credentials", "true");
+        res.header(
+            "Access-Control-Allow-Headers",
+            req.headers["access-control-request-headers"] || "Content-Type, Authorization",
+        );
+        res.header(
+            "Access-Control-Allow-Methods",
+            req.headers["access-control-request-method"] || "GET,POST,PATCH,DELETE,OPTIONS",
+        );
+        if (req.method === "OPTIONS") {
+            res.sendStatus(204);
+            return;
+        }
+        next();
+    });
     app.use("/uploads", express.static(path.resolve(process.cwd(), "uploads")));
     // Configure body parser with larger size limit for file uploads
     app.use(express.json({ limit: "50mb" }));
