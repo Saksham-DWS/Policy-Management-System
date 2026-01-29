@@ -3,8 +3,8 @@ import fs from "fs";
 import { nanoid } from "nanoid";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
 export async function setupVite(app, server) {
+    const { createServer: createViteServer } = await import("vite");
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     const cacheBase = process.env.LOCALAPPDATA || process.env.TEMP;
     const cacheDir = cacheBase
