@@ -7,7 +7,16 @@ export class ApiError extends Error {
         this.status = status;
         this.data = data;
     }
-} 
+}
+
+const API_BASE = (import.meta?.env?.VITE_API_URL || "").trim().replace(/\/+$/, "");
+
+const buildUrl = (path, query) => {
+    const base = API_BASE;
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    const url = `${base}${normalizedPath}${buildQueryString(query)}`;
+    return url;
+};
 
 const buildQueryString = (params) => {
     if (!params) {
@@ -35,7 +44,7 @@ const buildQueryString = (params) => {
 export const buildQueryKey = (key, input) => [key, input ?? null];
 
 const request = async (path, { method = "GET", body, query } = {}) => {
-    const url = `${path}${buildQueryString(query)}`;
+    const url = buildUrl(path, query);
     const headers = {};
     let payload;
     if (body !== undefined) {
@@ -76,7 +85,7 @@ const uploadFiles = async (path, files) => {
             formData.append("files", file);
         }
     });
-    const response = await fetch(path, {
+    const response = await fetch(buildUrl(path), {
         method: "POST",
         credentials: "include",
         body: formData,
