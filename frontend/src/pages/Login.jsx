@@ -78,7 +78,7 @@ export default function Login() {
               Welcome back
             </h2>
             <p className="text-gray-600">
-              Sign in to access your projects
+              Sign in to access your Policies and Incentives
             </p>
           </div>
 
