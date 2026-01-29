@@ -17,9 +17,9 @@ const cacheDir = (() => {
 })();
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, __dirname, "");
-    const apiTarget = env.VITE_API_URL;
-    if (!apiTarget) {
-        throw new Error("VITE_API_URL is required. Set it in frontend/.env.");
+    const apiTarget = env.VITE_API_URL || "http://localhost:3001";
+    if (!env.VITE_API_URL) {
+        console.warn("VITE_API_URL is not set. Falling back to http://localhost:3001 for dev proxy.");
     }
     const allowedHosts = env.VITE_ALLOWED_HOSTS
         ? env.VITE_ALLOWED_HOSTS.split(",").map((host) => host.trim()).filter(Boolean)
