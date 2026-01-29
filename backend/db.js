@@ -17,6 +17,12 @@ function normalizeRoleValue(role) {
 function normalizeEmployeeTypeValue(employeeType) {
     return LEGACY_EMPLOYEE_TYPE_MAP[employeeType] || employeeType;
 }
+function normalizeEmailValue(email) {
+    return typeof email === "string" ? email.trim().toLowerCase() : email;
+}
+function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function normalizeUserRecord(user) {
     if (!user)
         return user;
@@ -49,7 +55,7 @@ export async function upsertUser(userData) {
     if (userData.name !== undefined)
         updateData.name = userData.name;
     if (userData.email !== undefined)
-        updateData.email = userData.email;
+        updateData.email = normalizeEmailValue(userData.email);
     if (userData.loginMethod !== undefined)
         updateData.loginMethod = userData.loginMethod;
     if (userData.employeeType !== undefined)
@@ -72,8 +78,12 @@ export async function getUserById(id) {
 }
 export async function getUserByEmail(email) {
     await ensureConnection();
+    const normalizedEmail = normalizeEmailValue(email || "");
+    const matcher = normalizedEmail
+        ? new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i")
+        : email;
     // Explicitly select all fields including password
-    const user = await User.findOne({ email }).select('+password').lean();
+    const user = await User.findOne({ email: matcher }).select('+password').lean();
     return normalizeUserRecord(user);
 }
 export async function getUsersByIds(userIds) {
@@ -109,6 +119,7 @@ export async function createUser(userData) {
         ...userData,
         role: normalizeRoleValue(userData.role),
         employeeType: normalizeEmployeeTypeValue(userData.employeeType),
+        email: normalizeEmailValue(userData.email),
     };
     if (userData.password) {
         const bcrypt = await import('bcryptjs');
@@ -125,6 +136,9 @@ export async function updateUser(id, updates) {
     }
     if (updates.employeeType !== undefined) {
         normalizedUpdates.employeeType = normalizeEmployeeTypeValue(updates.employeeType);
+    }
+    if (updates.email !== undefined) {
+        normalizedUpdates.email = normalizeEmailValue(updates.email);
     }
     if (updates.password) {
         const bcrypt = await import('bcryptjs');
