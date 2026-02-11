@@ -6,14 +6,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Loader2, CheckCircle, DollarSign, User, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { CURRENCY_VALUES, formatCurrencyValue, getUserCurrency, normalizeCurrency } from "@/lib/currency";
 export default function AccountsManager() {
     const [selectedRedemption, setSelectedRedemption] = useState(null);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [paymentReference, setPaymentReference] = useState("");
     const [paymentNotes, setPaymentNotes] = useState("");
+    const [paymentCurrency, setPaymentCurrency] = useState("INR");
     const { data: redemptionQueue, isLoading, refetch } = api.redemption.getQueue.useQuery();
     const processRedemption = api.redemption.process.useMutation({
         onSuccess: () => {
@@ -22,14 +25,16 @@ export default function AccountsManager() {
             setSelectedRedemption(null);
             setPaymentReference("");
             setPaymentNotes("");
+            setPaymentCurrency("INR");
             refetch();
-        },
+        }, 
         onError: (error) => {
             toast.error(error.message);
         },
     });
     const handleProcess = (redemption) => {
         setSelectedRedemption(redemption);
+        setPaymentCurrency(normalizeCurrency(redemption?.currency, getUserCurrency(redemption?.user)));
         setIsDialogOpen(true);
     };
     const confirmProcess = () => {
@@ -41,6 +46,7 @@ export default function AccountsManager() {
             requestId: selectedRedemption._id.toString(),
             transactionReference: paymentReference,
             paymentNotes: paymentNotes || undefined,
+            paymentCurrency,
         });
     };
     const getStatusColor = (status) => {
@@ -90,7 +96,7 @@ export default function AccountsManager() {
                         </Badge>
                       </div>
                       <div className="text-right">
-                        <p className="text-3xl font-bold text-green-600">${redemption.amount}</p>
+                        <p className="text-3xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, redemption.currency)}</p>
                         <p className="text-xs text-muted-foreground mt-1">
                           Requested {new Date(redemption.createdAt).toLocaleDateString()}
                         </p>
@@ -140,7 +146,7 @@ export default function AccountsManager() {
                         </Badge>
                       </div>
                       <div className="text-right">
-                        <p className="text-2xl font-bold text-green-600">${redemption.amount}</p>
+                        <p className="text-2xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, redemption.currency)}</p>
                         <p className="text-xs text-muted-foreground mt-1">
                           Processed {new Date(redemption.processedAt).toLocaleDateString()}
                         </p>
@@ -174,7 +180,11 @@ export default function AccountsManager() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Amount:</span>
-                  <span className="text-sm font-bold text-green-600">${selectedRedemption.amount}</span>
+                  <span className="text-sm font-bold text-green-600">{formatCurrencyValue(selectedRedemption.amount, selectedRedemption.currency)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Currency:</span>
+                  <span className="text-sm">{normalizeCurrency(selectedRedemption.currency, paymentCurrency)}</span>
                 </div>
                 {selectedRedemption.notes && (
                   <div className="pt-2 border-t">
@@ -190,6 +200,22 @@ export default function AccountsManager() {
             </div>
 
             <div className="space-y-2">
+              <Label>Payment Currency *</Label>
+              <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select currency" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CURRENCY_VALUES.map((currency) => (
+                    <SelectItem key={currency} value={currency}>
+                      {currency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="notes">Payment Notes (Optional)</Label>
               <Textarea id="notes" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)} placeholder="Any additional notes about this payment..." rows={3}/>
             </div>
@@ -199,6 +225,7 @@ export default function AccountsManager() {
             setIsDialogOpen(false);
             setPaymentReference("");
             setPaymentNotes("");
+            setPaymentCurrency("INR");
         }}>
                 Cancel
               </Button>
@@ -212,5 +239,4 @@ export default function AccountsManager() {
       </Dialog>
     </div>);
 }
-
 

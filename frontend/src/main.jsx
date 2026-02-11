@@ -16,7 +16,7 @@ const redirectToLoginIfUnauthorized = (error) => {
     if (!isUnauthorized)
         return;
     window.location.href = getLoginUrl(); 
-};
+}; 
 queryClient.getQueryCache().subscribe(event => {
     if (event.type === "updated" && event.action.type === "error") {
         const error = event.query.state.error;

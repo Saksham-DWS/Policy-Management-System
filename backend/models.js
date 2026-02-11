@@ -1,4 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
+import { CURRENCY_VALUES, DEFAULT_CURRENCY } from "./shared/currency.js";
 const shouldSyncCollections = () => {
     if (process.env.SYNC_DB_ON_START === 'true') {
         return true;
@@ -144,6 +145,12 @@ const CreditRequestSchema = new Schema({
     bonus: { type: Number, default: 0 },
     deductions: { type: Number, default: 0 },
     amount: { type: Number, required: true },
+    currency: {
+        type: String,
+        enum: CURRENCY_VALUES,
+        default: DEFAULT_CURRENCY,
+        required: true,
+    },
     amountItems: [
         {
             amount: { type: Number, required: true },
@@ -184,6 +191,12 @@ export const CreditRequest = mongoose.models.CreditRequest || mongoose.model('Cr
 const WalletSchema = new Schema({
     userId: { type: String, required: true, unique: true, index: true },
     balance: { type: Number, default: 0 },
+    currency: {
+        type: String,
+        enum: CURRENCY_VALUES,
+        default: DEFAULT_CURRENCY,
+        required: true,
+    },
     updatedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 export const Wallet = mongoose.models.Wallet || mongoose.model('Wallet', WalletSchema);
@@ -195,6 +208,12 @@ const WalletTransactionSchema = new Schema({
         required: true
     },
     amount: { type: Number, required: true },
+    currency: {
+        type: String,
+        enum: CURRENCY_VALUES,
+        default: DEFAULT_CURRENCY,
+        required: true,
+    },
     balance: { type: Number, required: true },
     creditRequestId: String,
     redemptionRequestId: String,
@@ -217,6 +236,12 @@ export const Notification = mongoose.models.Notification || mongoose.model('Noti
 const RedemptionRequestSchema = new Schema({
     userId: { type: String, required: true },
     amount: { type: Number, required: true },
+    currency: {
+        type: String,
+        enum: CURRENCY_VALUES,
+        default: DEFAULT_CURRENCY,
+        required: true,
+    },
     method: { type: String },
     bankDetails: String,
     notes: String,

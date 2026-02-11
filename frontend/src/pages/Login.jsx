@@ -23,7 +23,7 @@ export default function Login() {
             toast.error(error.message || "Invalid email or password");
             setIsLoading(false);
         },
-    });
+    }); 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsLoading(true);

@@ -16,7 +16,7 @@ export const getSessionToken = () => {
         return null;
     }
     return window.localStorage.getItem(SESSION_TOKEN_KEY);
-};
+}; 
 
 export const setSessionToken = (token) => {
     if (typeof window === "undefined") {

@@ -1,16 +1,18 @@
 import PDFDocument from "pdfkit";
+import { formatCurrencyAmount, normalizeCurrency } from "../shared/currency.js";
 
 export async function buildTimelinePdf({
     title,
     employee,
     amount,
+    currency,
     timelineLog,
     creditTransactionId,
     redemptionId,
 }) {
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     const chunks = [];
-
+ 
     return await new Promise((resolve, reject) => {
         doc.on("data", (chunk) => chunks.push(chunk));
         doc.on("error", reject);
@@ -24,7 +26,7 @@ export async function buildTimelinePdf({
             doc.text(`Employee: ${employee.name || ""} (${employee.email || ""})`);
         }
         if (typeof amount === "number") {
-            doc.text(`Amount: $${amount.toFixed(2)}`);
+            doc.text(`Amount: ${formatCurrencyAmount(amount, normalizeCurrency(currency))}`);
         }
         if (creditTransactionId) {
             doc.text(`Credit Transaction ID: ${creditTransactionId}`);

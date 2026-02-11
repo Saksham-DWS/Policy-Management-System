@@ -8,7 +8,7 @@ class ErrorBoundary extends Component {
     }
     static getDerivedStateFromError(error) {
         return { hasError: true, error };
-    }
+    } 
     render() {
         if (this.state.hasError) {
             return (<div className="flex items-center justify-center min-h-screen p-8 bg-background">

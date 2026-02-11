@@ -102,7 +102,7 @@ export default function ComponentsShowcase() {
             {theme === "light" ? (<Moon className="h-5 w-5"/>) : (<Sun className="h-5 w-5"/>)}
           </Button>
         </div>
-
+ 
         <div className="space-y-12">
           {/* Text Colors Section */}
           <section className="space-y-4">

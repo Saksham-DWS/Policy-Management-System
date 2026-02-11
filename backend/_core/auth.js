@@ -5,7 +5,7 @@ import { jwtVerify } from "jose";
 import * as db from "../db.js";
 import { ENV } from "./env.js";
 import { logger } from "./logger.js";
-
+ 
 const parseCookies = (cookieHeader) => {
     if (!cookieHeader) {
         return new Map();

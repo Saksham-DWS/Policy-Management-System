@@ -1,8 +1,9 @@
 import { api } from "@/lib/api";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, User, Mail, Shield, Briefcase, Calendar } from "lucide-react";
+import { Loader2, User, Mail, Shield, Briefcase, Calendar, DollarSign } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { getUserCurrency } from "@/lib/currency";
 
 const roleLabel = (role) => {
   switch (role) {
@@ -16,7 +17,7 @@ const roleLabel = (role) => {
       return "Employee";
   }
 };
- 
+  
 const employeeTypeLabel = (type) => {
   switch (type) {
     case "permanent_india":
@@ -88,6 +89,13 @@ export default function Profile() {
                 <Badge variant="outline">{employeeTypeLabel(user.employeeType)}</Badge>
               </div>
             </div>
+            <div className="flex items-center gap-3">
+              <DollarSign className="w-5 h-5 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Currency</p>
+                <Badge variant="outline">{getUserCurrency(user)}</Badge>
+              </div>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -128,4 +136,3 @@ export default function Profile() {
     </div>
   );
 }
-

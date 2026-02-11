@@ -1,4 +1,5 @@
 import { connectDB, User, Policy, TeamAssignment, EmployeePolicy, PolicyInitiator, EmployeeInitiator, CreditRequest, Wallet, WalletTransaction, Notification, RedemptionRequest, AuditLog, AccessControl, } from './models.js';
+import { DEFAULT_CURRENCY, getCurrencyByEmployeeType, normalizeCurrency } from "./shared/currency.js";
 // Ensure DB connection before any operation
 async function ensureConnection() {
     await connectDB();
@@ -20,16 +21,21 @@ function normalizeEmployeeTypeValue(employeeType) {
 function normalizeEmailValue(email) {
     return typeof email === "string" ? email.trim().toLowerCase() : email;
 }
+function normalizeCurrencyValue(currency, employeeType) {
+    return normalizeCurrency(currency, getCurrencyByEmployeeType(normalizeEmployeeTypeValue(employeeType)));
+}
 function escapeRegex(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 function normalizeUserRecord(user) {
     if (!user)
         return user;
+    const normalizedEmployeeType = normalizeEmployeeTypeValue(user.employeeType);
     return {
         ...user,
         role: normalizeRoleValue(user.role),
-        employeeType: normalizeEmployeeTypeValue(user.employeeType),
+        employeeType: normalizedEmployeeType,
+        currency: normalizeCurrencyValue(user.currency, normalizedEmployeeType),
     };
 }
 function normalizeUserList(users) {
@@ -48,6 +54,9 @@ function expandRoleFilter(role) {
 // ==================== USER OPERATIONS ====================
 export async function upsertUser(userData) {
     await ensureConnection();
+    const normalizedEmployeeType = userData.employeeType !== undefined
+        ? normalizeEmployeeTypeValue(userData.employeeType)
+        : undefined;
     const updateData = {
         openId: userData.openId,
         lastSignedIn: userData.lastSignedIn || new Date(),
@@ -58,8 +67,11 @@ export async function upsertUser(userData) {
         updateData.email = normalizeEmailValue(userData.email);
     if (userData.loginMethod !== undefined)
         updateData.loginMethod = userData.loginMethod;
-    if (userData.employeeType !== undefined)
-        updateData.employeeType = normalizeEmployeeTypeValue(userData.employeeType);
+    if (normalizedEmployeeType !== undefined)
+        updateData.employeeType = normalizedEmployeeType;
+    if (userData.currency !== undefined || normalizedEmployeeType !== undefined) {
+        updateData.currency = normalizeCurrencyValue(userData.currency, normalizedEmployeeType);
+    }
     // Set role, defaulting to admin for owner
     if (userData.role !== undefined) {
         updateData.role = normalizeRoleValue(userData.role);
@@ -114,11 +126,13 @@ export async function getUsersByHod(hodId) {
 }
 export async function createUser(userData) {
     await ensureConnection();
+    const normalizedEmployeeType = normalizeEmployeeTypeValue(userData.employeeType);
     // Hash password if provided
     const dataToSave = {
         ...userData,
         role: normalizeRoleValue(userData.role),
-        employeeType: normalizeEmployeeTypeValue(userData.employeeType),
+        employeeType: normalizedEmployeeType,
+        currency: normalizeCurrencyValue(userData.currency, normalizedEmployeeType),
         email: normalizeEmailValue(userData.email),
     };
     if (userData.password) {
@@ -134,8 +148,14 @@ export async function updateUser(id, updates) {
     if (updates.role !== undefined) {
         normalizedUpdates.role = normalizeRoleValue(updates.role);
     }
-    if (updates.employeeType !== undefined) {
-        normalizedUpdates.employeeType = normalizeEmployeeTypeValue(updates.employeeType);
+    const normalizedEmployeeType = updates.employeeType !== undefined
+        ? normalizeEmployeeTypeValue(updates.employeeType)
+        : undefined;
+    if (normalizedEmployeeType !== undefined) {
+        normalizedUpdates.employeeType = normalizedEmployeeType;
+    }
+    if (updates.currency !== undefined || normalizedEmployeeType !== undefined) {
+        normalizedUpdates.currency = normalizeCurrencyValue(updates.currency, normalizedEmployeeType);
     }
     if (updates.email !== undefined) {
         normalizedUpdates.email = normalizeEmailValue(updates.email);
@@ -312,32 +332,74 @@ export async function getEmployeeInitiatorsByInitiatorId(initiatorId) {
 // ==================== CREDIT REQUEST OPERATIONS ====================
 export async function createCreditRequest(data) {
     await ensureConnection();
-    const request = await CreditRequest.create(data);
+    const request = await CreditRequest.create({
+        ...data,
+        currency: normalizeCurrency(data.currency, DEFAULT_CURRENCY),
+    });
     return request.toObject();
+}
+async function resolveCurrencyByUserIds(userIds) {
+    const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean).map((id) => id.toString())));
+    if (uniqueIds.length === 0) {
+        return new Map();
+    }
+    const users = await User.find({ _id: { $in: uniqueIds } })
+        .select("_id employeeType currency")
+        .lean();
+    return new Map(
+        users.map((user) => [
+            user._id.toString(),
+            normalizeCurrencyValue(user.currency, user.employeeType),
+        ]),
+    );
+}
+function normalizeCreditRequestCurrency(request, userCurrencyMap) {
+    if (!request) {
+        return request;
+    }
+    return {
+        ...request,
+        currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY),
+    };
 }
 export async function getCreditRequestById(id) {
     await ensureConnection();
-    return await CreditRequest.findById(id).lean();
+    const request = await CreditRequest.findById(id).lean();
+    if (!request) {
+        return request;
+    }
+    const userCurrencyMap = await resolveCurrencyByUserIds([request.userId]);
+    return normalizeCreditRequestCurrency(request, userCurrencyMap);
 }
 export async function getCreditRequestsByUserId(userId) {
     await ensureConnection();
-    return await CreditRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+    const requests = await CreditRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds([userId]);
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 export async function getCreditRequestsByHod(hodId) {
     await ensureConnection();
-    return await CreditRequest.find({ hodId }).sort({ createdAt: -1 }).lean();
+    const requests = await CreditRequest.find({ hodId }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 export async function getCreditRequestsByInitiator(initiatorId) {
     await ensureConnection();
-    return await CreditRequest.find({ initiatorId }).sort({ createdAt: -1 }).lean();
+    const requests = await CreditRequest.find({ initiatorId }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 export async function getAllCreditRequests() {
     await ensureConnection();
-    return await CreditRequest.find().sort({ createdAt: -1 }).lean();
+    const requests = await CreditRequest.find().sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 export async function getCreditRequestsByStatus(status) {
     await ensureConnection();
-    return await CreditRequest.find({ status }).sort({ createdAt: -1 }).lean();
+    const requests = await CreditRequest.find({ status }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 export async function updateCreditRequest(id, updates) {
     await ensureConnection();
@@ -346,20 +408,48 @@ export async function updateCreditRequest(id, updates) {
 // ==================== WALLET OPERATIONS ====================
 async function ensureWallet(userId) {
     await ensureConnection();
+    const user = await User.findById(userId).select("currency employeeType").lean();
+    const userCurrency = normalizeCurrencyValue(
+        user?.currency,
+        user?.employeeType,
+    );
     let wallet = await Wallet.findOne({ userId }).lean();
     if (!wallet) {
-        const created = await Wallet.create({ userId, balance: 0, updatedAt: new Date() });
+        const created = await Wallet.create({
+            userId,
+            balance: 0,
+            currency: userCurrency,
+            updatedAt: new Date(),
+        });
         wallet = created.toObject();
+    } else if (!wallet.currency) {
+        await Wallet.findOneAndUpdate(
+            { userId },
+            { $set: { currency: userCurrency, updatedAt: new Date() } },
+        );
+        wallet = { ...wallet, currency: userCurrency };
     }
-    return wallet;
+    return {
+        ...wallet,
+        currency: normalizeCurrency(wallet.currency, userCurrency),
+    };
 }
 export async function createWalletTransaction(data) {
     await ensureConnection();
-    const transaction = await WalletTransaction.create(data);
+    const wallet = await ensureWallet(data.userId);
+    const currency = normalizeCurrency(data.currency, wallet.currency);
+    const transaction = await WalletTransaction.create({
+        ...data,
+        currency,
+    });
     await Wallet.findOneAndUpdate({ userId: data.userId }, {
-        $set: { balance: data.balance, updatedAt: new Date() },
+        $set: { balance: data.balance, currency, updatedAt: new Date() },
     }, { upsert: true });
     return transaction.toObject();
+}
+export async function getWalletByUserId(userId) {
+    await ensureConnection();
+    return await ensureWallet(userId);
 }
 export async function getWalletBalance(userId) {
     await ensureConnection();
@@ -368,11 +458,24 @@ export async function getWalletBalance(userId) {
 }
 export async function getWalletTransactions(userId) {
     await ensureConnection();
-    return await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
+    const wallet = await ensureWallet(userId);
+    const transactions = await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
+    return transactions.map((transaction) => ({
+        ...transaction,
+        currency: normalizeCurrency(transaction.currency, wallet.currency),
+    }));
 }
 export async function getWalletTransactionById(id) {
     await ensureConnection();
-    return await WalletTransaction.findById(id).lean();
+    const transaction = await WalletTransaction.findById(id).lean();
+    if (!transaction) {
+        return transaction;
+    }
+    const wallet = await ensureWallet(transaction.userId);
+    return {
+        ...transaction,
+        currency: normalizeCurrency(transaction.currency, wallet.currency),
+    };
 }
 export async function updateWalletTransaction(id, updates) {
     await ensureConnection();
@@ -380,19 +483,60 @@ export async function updateWalletTransaction(id, updates) {
 }
 export async function getRedeemableCreditTransactions(userId) {
     await ensureConnection();
-    return await WalletTransaction.find({
+    const wallet = await ensureWallet(userId);
+    const transactions = await WalletTransaction.find({
         userId,
         type: "credit",
         redeemed: false,
     }).sort({ createdAt: -1 }).lean();
+    return transactions.map((transaction) => ({
+        ...transaction,
+        currency: normalizeCurrency(transaction.currency, wallet.currency),
+    }));
 }
 export async function getWalletTransactionsByUserIds(userIds) {
     await ensureConnection();
-    return await WalletTransaction.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+    const [transactions, wallets, userCurrencyMap] = await Promise.all([
+        WalletTransaction.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean(),
+        Wallet.find({ userId: { $in: userIds } }).select("userId currency").lean(),
+        resolveCurrencyByUserIds(userIds),
+    ]);
+    const walletCurrencyMap = new Map(
+        wallets.map((wallet) => [wallet.userId, normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)]),
+    );
+    return transactions.map((transaction) => ({
+        ...transaction,
+        currency: normalizeCurrency(
+            transaction.currency,
+            walletCurrencyMap.get(transaction.userId) ||
+                userCurrencyMap.get(transaction.userId) ||
+                DEFAULT_CURRENCY,
+        ),
+    }));
 }
 export async function getAllWalletTransactions() {
     await ensureConnection();
-    return await WalletTransaction.find().sort({ createdAt: -1 }).lean();
+    const transactions = await WalletTransaction.find().sort({ createdAt: -1 }).lean();
+    if (transactions.length === 0) {
+        return transactions;
+    }
+    const userIds = Array.from(new Set(transactions.map((transaction) => transaction.userId).filter(Boolean)));
+    const [wallets, userCurrencyMap] = await Promise.all([
+        Wallet.find({ userId: { $in: userIds } }).select("userId currency").lean(),
+        resolveCurrencyByUserIds(userIds),
+    ]);
+    const walletCurrencyMap = new Map(
+        wallets.map((wallet) => [wallet.userId, normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)]),
+    );
+    return transactions.map((transaction) => ({
+        ...transaction,
+        currency: normalizeCurrency(
+            transaction.currency,
+            walletCurrencyMap.get(transaction.userId) ||
+                userCurrencyMap.get(transaction.userId) ||
+                DEFAULT_CURRENCY,
+        ),
+    }));
 }
 // ==================== NOTIFICATION OPERATIONS ====================
 export async function createNotification(data) {
@@ -436,28 +580,53 @@ export async function getWalletSummary(userId) {
 // ==================== REDEMPTION OPERATIONS ====================
 export async function createRedemptionRequest(data) {
     await ensureConnection();
-    const request = await RedemptionRequest.create(data);
+    const request = await RedemptionRequest.create({
+        ...data,
+        currency: normalizeCurrency(data.currency, DEFAULT_CURRENCY),
+    });
     return request.toObject();
+}
+function normalizeRedemptionRequestCurrency(request, userCurrencyMap) {
+    if (!request) {
+        return request;
+    }
+    return {
+        ...request,
+        currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY),
+    };
 }
 export async function getRedemptionRequestById(id) {
     await ensureConnection();
-    return await RedemptionRequest.findById(id).lean();
+    const request = await RedemptionRequest.findById(id).lean();
+    if (!request) {
+        return request;
+    }
+    const userCurrencyMap = await resolveCurrencyByUserIds([request.userId]);
+    return normalizeRedemptionRequestCurrency(request, userCurrencyMap);
 }
 export async function getRedemptionRequestsByUserId(userId) {
     await ensureConnection();
-    return await RedemptionRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+    const requests = await RedemptionRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds([userId]);
+    return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 export async function getRedemptionRequestsByUserIds(userIds) {
     await ensureConnection();
-    return await RedemptionRequest.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+    const requests = await RedemptionRequest.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(userIds);
+    return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 export async function getAllRedemptionRequests() {
     await ensureConnection();
-    return await RedemptionRequest.find().sort({ createdAt: -1 }).lean();
+    const requests = await RedemptionRequest.find().sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 export async function getRedemptionRequestsByStatus(status) {
     await ensureConnection();
-    return await RedemptionRequest.find({ status }).sort({ createdAt: -1 }).lean();
+    const requests = await RedemptionRequest.find({ status }).sort({ createdAt: -1 }).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 export async function updateRedemptionRequest(id, updates) {
     await ensureConnection();

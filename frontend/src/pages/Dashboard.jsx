@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { api } from "@/lib/api";
+import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Users, FileText, CheckCircle, DollarSign, Clock, TrendingUp, Sparkles } from "lucide-react";
 export default function Dashboard() {
@@ -13,6 +14,7 @@ export default function Dashboard() {
     if (!user)
         return null;
     const role = user.role;
+    const userCurrency = stats?.currency || getUserCurrency(user);
     return (<div className="space-y-8 p-6">
       {/* Dashboard Header */} 
       <div className="space-y-2">
@@ -24,7 +26,7 @@ export default function Dashboard() {
           Welcome back, {user.name || user.email}
         </p>
       </div>
-
+ 
       {/* Admin Dashboard */}
       {role === 'admin' && stats && (<div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="card-hover border-2 relative overflow-hidden group">
@@ -206,7 +208,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-foreground">
-                ${stats.walletBalance}
+                {formatCurrencyValue(stats.walletBalance, userCurrency)}
               </div>
               <p className="text-xs text-muted-foreground mt-2">Available balance</p>
             </CardContent>
@@ -254,7 +256,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold text-foreground">
-                ${stats.thisMonthEarnings}
+                {formatCurrencyValue(stats.thisMonthEarnings, userCurrency)}
               </div>
               <p className="text-xs text-muted-foreground mt-2">Earned this month</p>
             </CardContent>

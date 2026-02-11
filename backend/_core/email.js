@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import nodemailer from "nodemailer";
 import { getGridFSFileBuffer } from "./files.js";
+import { formatCurrencyAmount, normalizeCurrency } from "../shared/currency.js";
 
 const getSmtpConfig = () => {
     const secureValue = (process.env.SMTP_SECURE || "").toString().toLowerCase();
@@ -21,7 +22,7 @@ const getSmtpConfig = () => {
         from,
     };
 };
-
+ 
 const getTransport = () => {
     const config = getSmtpConfig();
     if (!config.host || !config.user || !config.pass) {
@@ -44,6 +45,7 @@ const getTransport = () => {
 
 const resolveAttachmentPath = (filename) =>
     path.resolve(process.cwd(), "uploads", "credit-requests", filename);
+const formatMoney = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
 
 export async function sendHodFreelancerRequestEmail({
     to,
@@ -51,6 +53,7 @@ export async function sendHodFreelancerRequestEmail({
     employee,
     initiator,
     amount,
+    currency,
     details,
     attachments,
     requestType,
@@ -74,7 +77,7 @@ export async function sendHodFreelancerRequestEmail({
         `A ${typeLabel.toLowerCase()} request has been submitted.`,
         `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
         `Initiator: ${initiator?.name || ""} (${initiator?.email || ""})`,
-        `Amount: $${Number(amount || 0).toFixed(2)}`,
+        `Amount: ${formatMoney(amount, currency)}`,
         details ? `Details: ${details}` : "",
         "",
         approvalUrl
@@ -132,6 +135,7 @@ export async function sendInitiatorFreelancerRejectionEmail({
     employee,
     hod,
     amount,
+    currency,
     reason,
     rejectedBy,
     requestType,
@@ -154,7 +158,7 @@ export async function sendInitiatorFreelancerRejectionEmail({
         `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
         hod ? `HOD: ${hod?.name || ""} (${hod?.email || ""})` : "",
         rejectedBy ? `Rejected by: ${rejectedBy}` : "",
-        `Amount: $${Number(amount || 0).toFixed(2)}`,
+        `Amount: ${formatMoney(amount, currency)}`,
         reason ? `Reason: ${reason}` : "",
     ].filter(Boolean);
     await transporter.sendMail({
@@ -171,6 +175,7 @@ export async function sendRedemptionRequestEmail({
     accountName,
     employee,
     amount,
+    currency,
     balanceBefore,
     balanceAfter,
     redemptionId,
@@ -206,9 +211,9 @@ export async function sendRedemptionRequestEmail({
         "A redemption request has been submitted.",
         `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
         redemptionId ? `Request ID: ${redemptionId}` : "",
-        `Amount: $${Number(amount || 0).toFixed(2)}`,
-        balanceBefore !== undefined ? `Balance before: $${Number(balanceBefore).toFixed(2)}` : "",
-        balanceAfter !== undefined ? `Balance after: $${Number(balanceAfter).toFixed(2)}` : "",
+        `Amount: ${formatMoney(amount, currency)}`,
+        balanceBefore !== undefined ? `Balance before: ${formatMoney(balanceBefore, currency)}` : "",
+        balanceAfter !== undefined ? `Balance after: ${formatMoney(balanceAfter, currency)}` : "",
         "",
         "Timeline Log:",
         ...logLines,
@@ -235,6 +240,7 @@ export async function sendRedemptionProcessedEmail({
     to,
     employeeName,
     amount,
+    currency,
     transactionReference,
     processedBy,
     paymentNotes,
@@ -255,7 +261,7 @@ export async function sendRedemptionProcessedEmail({
         "",
         "Your redemption request has been processed.",
         redemptionId ? `Request ID: ${redemptionId}` : "",
-        `Amount: $${Number(amount || 0).toFixed(2)}`,
+        `Amount: ${formatMoney(amount, currency)}`,
         transactionReference ? `Transaction Reference: ${transactionReference}` : "",
         processedBy ? `Processed by: ${processedBy}` : "",
         paymentNotes ? `Notes: ${paymentNotes}` : "",

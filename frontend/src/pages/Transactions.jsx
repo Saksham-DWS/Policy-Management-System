@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, DollarSign, FileText, Clock, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
 
 const statusLabels = {
   pending_signature: "Pending Signature",
@@ -20,7 +21,7 @@ const statusLabels = {
   rejected_by_user: "Rejected by Employee",
   rejected_by_hod: "Rejected by HOD",
 }; 
-
+ 
 const statusColors = {
   pending_signature: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   pending_approval: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
@@ -106,6 +107,21 @@ export default function Transactions() {
     });
     return map;
   }, [initiatorScope]);
+  const freelancersById = useMemo(() => {
+    const map = new Map();
+    (initiatorScope?.freelancers || []).forEach((freelancer) => {
+      map.set(freelancer._id?.toString(), freelancer);
+    });
+    return map;
+  }, [initiatorScope]);
+  const selectedCurrency = useMemo(() => {
+    if (formData.type === "policy") {
+      const assignment = assignmentsById.get(formData.assignmentId);
+      return getUserCurrency(assignment?.user);
+    }
+    const freelancer = freelancersById.get(formData.freelancerId);
+    return getUserCurrency(freelancer);
+  }, [assignmentsById, freelancersById, formData.assignmentId, formData.freelancerId, formData.type]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -239,7 +255,7 @@ export default function Transactions() {
 
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="baseAmount">Base Amount *</Label>
+                    <Label htmlFor="baseAmount">Base Amount ({selectedCurrency}) *</Label>
                     <Input
                       id="baseAmount"
                       type="number"
@@ -251,7 +267,7 @@ export default function Transactions() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="bonus">Bonus</Label>
+                    <Label htmlFor="bonus">Bonus ({selectedCurrency})</Label>
                     <Input
                       id="bonus"
                       type="number"
@@ -262,7 +278,7 @@ export default function Transactions() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="deductions">Deductions</Label>
+                    <Label htmlFor="deductions">Deductions ({selectedCurrency})</Label>
                     <Input
                       id="deductions"
                       type="number"
@@ -275,8 +291,8 @@ export default function Transactions() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Total Amount</Label>
-                  <Input value={totalAmount.toFixed(2)} readOnly />
+                  <Label>Total Amount ({selectedCurrency})</Label>
+                  <Input value={formatCurrencyValue(totalAmount, selectedCurrency)} readOnly />
                 </div>
 
                 <div className="space-y-2">
@@ -286,7 +302,7 @@ export default function Transactions() {
                     value={formData.breakdown}
                     onChange={(e) => setFormData((prev) => ({ ...prev, breakdown: e.target.value }))}
                     required
-                    placeholder="e.g., Base: $10,000 | Commission: 5% | Total: $500"
+                    placeholder="e.g., Base: 10,000 | Commission: 5% | Total: 500"
                     rows={3}
                   />
                 </div>
@@ -338,7 +354,9 @@ export default function Transactions() {
             </div>
           ) : (
             <div className="space-y-4">
-              {requestsToDisplay.map((request) => (
+              {requestsToDisplay.map((request) => {
+                const requestCurrency = request.currency || getUserCurrency(request.user);
+                return (
                 <div key={request._id?.toString()} className="border rounded-lg p-4 hover:bg-gray-100 transition-colors">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
@@ -356,8 +374,8 @@ export default function Transactions() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-2xl font-bold text-green-600">${request.amount?.toFixed(2)}</p>
-                      <p className="text-xs text-muted-foreground">Base: ${request.baseAmount}</p>
+                      <p className="text-2xl font-bold text-green-600">{formatCurrencyValue(request.amount, requestCurrency)}</p>
+                      <p className="text-xs text-muted-foreground">Base: {formatCurrencyValue(request.baseAmount, requestCurrency)}</p>
                     </div>
                   </div>
 
@@ -388,7 +406,7 @@ export default function Transactions() {
                     </div>
                   )}
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </CardContent>
@@ -420,7 +438,7 @@ export default function Transactions() {
                       </Badge>
                     </div>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      Amount: ${request.amount?.toFixed(2)} � {new Date(request.createdAt).toLocaleDateString()}
+                      Amount: {formatCurrencyValue(request.amount, request.currency || getUserCurrency(request.user))} - {new Date(request.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                 ))}
@@ -432,5 +450,4 @@ export default function Transactions() {
     </div>
   );
 }
-
 

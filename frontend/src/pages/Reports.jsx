@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { formatCurrencyValue } from "@/lib/currency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
@@ -17,31 +18,49 @@ export default function Reports() {
 
   const totals = data?.totals || {
     totalCredits: 0,
+    totalCreditsByCurrency: { USD: 0, INR: 0 },
     totalRedemptions: 0,
+    totalRedemptionsByCurrency: { USD: 0, INR: 0 },
     pendingApprovals: 0,
     pendingSignatures: 0,
     pendingRedemptions: 0,
   };
-
+ 
   return (
     <div className="space-y-6 p-6">
       <h1 className="text-3xl font-bold">Reports & Analytics</h1>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Total Credits</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Credits (USD)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">${totals.totalCredits.toFixed(2)}</p>
+            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalCreditsByCurrency?.USD || 0, "USD")}</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Total Redemptions</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Credits (INR)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-semibold">${totals.totalRedemptions.toFixed(2)}</p>
+            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalCreditsByCurrency?.INR || 0, "INR")}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm text-muted-foreground">Redemptions (USD)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalRedemptionsByCurrency?.USD || 0, "USD")}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm text-muted-foreground">Redemptions (INR)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalRedemptionsByCurrency?.INR || 0, "INR")}</p>
           </CardContent>
         </Card>
         <Card>
@@ -78,9 +97,13 @@ export default function Reports() {
           <CardContent>
             <ChartContainer
               config={{
-                value: {
-                  label: "Credits",
-                  color: "hsl(var(--primary))",
+                USD: {
+                  label: "USD",
+                  color: "#2563eb",
+                },
+                INR: {
+                  label: "INR",
+                  color: "#16a34a",
                 },
               }}
             >
@@ -89,7 +112,8 @@ export default function Reports() {
                 <XAxis dataKey="month" tickLine={false} axisLine={false} />
                 <YAxis tickLine={false} axisLine={false} width={40} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="value" fill="var(--color-value)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="USD" fill="var(--color-USD)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="INR" fill="var(--color-INR)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartContainer>
           </CardContent>
@@ -102,9 +126,13 @@ export default function Reports() {
           <CardContent>
             <ChartContainer
               config={{
-                value: {
-                  label: "Redemptions",
-                  color: "hsl(var(--secondary))",
+                USD: {
+                  label: "USD",
+                  color: "#f97316",
+                },
+                INR: {
+                  label: "INR",
+                  color: "#7c3aed",
                 },
               }}
             >
@@ -113,7 +141,8 @@ export default function Reports() {
                 <XAxis dataKey="month" tickLine={false} axisLine={false} />
                 <YAxis tickLine={false} axisLine={false} width={40} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="value" fill="var(--color-value)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="USD" fill="var(--color-USD)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="INR" fill="var(--color-INR)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartContainer>
           </CardContent>
@@ -166,4 +195,3 @@ export default function Reports() {
     </div>
   );
 }
-

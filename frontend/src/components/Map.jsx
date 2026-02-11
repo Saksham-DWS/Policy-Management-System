@@ -12,7 +12,7 @@
  *   onMapReady={(map) => {
  *     mapRef.current = map; // Store to control map from parent anytime, google map itself is in charge of the re-rendering, not react state.
  * </MapView>
- *
+ * 
  * ======
  * Available Libraries and Core Features:
  * -------------------------------

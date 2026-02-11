@@ -20,3 +20,4 @@ function Badge({ className, variant, asChild = false, ...props }) {
     return (<Comp data-slot="badge" className={cn(badgeVariants({ variant }), className)} {...props}/>);
 }
 export { Badge, badgeVariants };
+ 

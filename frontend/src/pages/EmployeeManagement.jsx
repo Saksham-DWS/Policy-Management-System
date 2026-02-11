@@ -15,7 +15,8 @@ import { toast } from "sonner";
 import { Loader2, UserPlus, Settings2, Trash2, Calendar, Pencil, Check, ChevronsUpDown, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
- 
+import { getUserCurrency } from "@/lib/currency";
+  
 const employeeTypeLabel = (type) => {
   switch (type) {
     case "permanent_india":
@@ -944,6 +945,9 @@ export default function EmployeeManagement() {
                 <p>
                   <span className="font-medium">HOD:</span> {getHodDisplayName(initiateTarget)}
                 </p>
+                <p>
+                  <span className="font-medium">Currency:</span> {getUserCurrency(initiateTarget)}
+                </p>
               </div>
             )}
             <div className="space-y-2">
@@ -959,7 +963,7 @@ export default function EmployeeManagement() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="freelancer-amount">Amount *</Label>
+              <Label htmlFor="freelancer-amount">Amount ({getUserCurrency(initiateTarget)}) *</Label>
               <Input
                 id="freelancer-amount"
                 type="number"
@@ -1032,6 +1036,9 @@ export default function EmployeeManagement() {
                 <p>
                   <span className="font-medium">HOD:</span> {getHodDisplayName(policyTarget)}
                 </p>
+                <p>
+                  <span className="font-medium">Currency:</span> {getUserCurrency(policyTarget)}
+                </p>
               </div>
             )}
             <div className="space-y-2">
@@ -1065,7 +1072,7 @@ export default function EmployeeManagement() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="policy-amount">Amount *</Label>
+              <Label htmlFor="policy-amount">Amount ({getUserCurrency(policyTarget)}) *</Label>
               <Input
                 id="policy-amount"
                 type="number"
@@ -1121,5 +1128,4 @@ export default function EmployeeManagement() {
     </div>
   );
 }
-
 

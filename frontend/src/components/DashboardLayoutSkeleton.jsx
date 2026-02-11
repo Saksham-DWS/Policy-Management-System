@@ -15,7 +15,7 @@ export function DashboardLayoutSkeleton() {
           <Skeleton className="h-10 w-full rounded-lg"/>
           <Skeleton className="h-10 w-full rounded-lg"/>
         </div>
-
+ 
         {/* User profile area at bottom */}
         <div className="absolute bottom-4 left-4 right-4">
           <div className="flex items-center gap-3 px-1">

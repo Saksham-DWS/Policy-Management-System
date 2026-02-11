@@ -13,7 +13,7 @@ const envResult = dotenv.config({
 if (envResult.error) {
     dotenv.config();
 }
-
+ 
 const jwtSecret = process.env.JWT_SECRET?.trim();
 const mongoUri = process.env.MONGODB_URI || process.env.DATABASE_URL;
 

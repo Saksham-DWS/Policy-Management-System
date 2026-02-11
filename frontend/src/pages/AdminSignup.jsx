@@ -19,7 +19,7 @@ export default function AdminSignup() {
     onSuccess: (data) => {
       if (data?.token) {
         setSessionToken(data.token);
-      }
+      } 
       toast.success("Admin account created. You're signed in!");
       window.location.href = "/";
     },

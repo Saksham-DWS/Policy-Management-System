@@ -10,9 +10,10 @@ import { toast } from "sonner";
 import { Loader2, Wallet, DollarSign, TrendingUp, TrendingDown, Clock, CheckCircle, XCircle, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
 
 export default function MyAccount() {
-  useAuth();
+  const { user } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedRedemptionId, setSelectedRedemptionId] = useState("");
   const [redemptionNotes, setRedemptionNotes] = useState(""); 
@@ -20,10 +21,11 @@ export default function MyAccount() {
   const { data: walletData, isLoading: walletLoading, refetch } = api.wallet.getBalance.useQuery();
   const { data: transactions, isLoading: txLoading } = api.wallet.getTransactions.useQuery();
   const { data: redemptions, isLoading: redemptionsLoading } = api.redemption.getMyRequests.useQuery();
+  const walletCurrency = walletData?.currency || getUserCurrency(user);
   const redeemableTransactions = (transactions || []).filter(
     (tx) => tx.type === "credit" && tx.amount > 0 && !tx.redeemed
   );
-
+ 
   const requestRedemption = api.redemption.create.useMutation({
     onSuccess: () => {
       toast.success("Redemption request submitted successfully");
@@ -102,8 +104,8 @@ export default function MyAccount() {
         <CardContent>
           <div className="flex items-end justify-between">
             <div>
-              <p className="text-5xl font-bold">${walletData?.balance?.toFixed(2) || "0.00"}</p>
-              <p className="text-green-100 mt-2">Available for redemption</p>
+              <p className="text-5xl font-bold">{formatCurrencyValue(walletData?.balance || 0, walletCurrency)}</p>
+              <p className="text-green-100 mt-2">Available for redemption ({walletCurrency})</p>
             </div>
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
               <DialogTrigger asChild>
@@ -119,7 +121,7 @@ export default function MyAccount() {
                 <div className="space-y-4 mt-4">
                   <div className="p-4 bg-accent/30 rounded-md">
                     <p className="text-sm text-muted-foreground">Available Balance</p>
-                    <p className="text-2xl font-bold text-green-600">${walletData?.balance?.toFixed(2)}</p>
+                    <p className="text-2xl font-bold text-green-600">{formatCurrencyValue(walletData?.balance || 0, walletCurrency)}</p>
                   </div>
 
                   <div className="space-y-2">
@@ -136,13 +138,13 @@ export default function MyAccount() {
                         ) : (
                           redeemableTransactions.map((tx) => (
                             <SelectItem key={tx._id?.toString()} value={tx._id?.toString()}>
-                              ${tx.amount} - {tx.description || "Credit"} - {new Date(tx.createdAt).toLocaleDateString()}
+                              {formatCurrencyValue(tx.amount, tx.currency || walletCurrency)} - {tx.description || "Credit"} - {new Date(tx.createdAt).toLocaleDateString()}
                             </SelectItem>
                           ))
                         )}
                       </SelectContent>
                     </Select>
-                    <p className="text-xs text-muted-foreground">Maximum: ${walletData?.balance?.toFixed(2)}</p>
+                    <p className="text-xs text-muted-foreground">Maximum: {formatCurrencyValue(walletData?.balance || 0, walletCurrency)}</p>
                   </div>
 
                   <div className="space-y-2">
@@ -189,7 +191,7 @@ export default function MyAccount() {
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="font-semibold text-lg">${redemption.amount}</p>
+                        <p className="font-semibold text-lg">{formatCurrencyValue(redemption.amount, redemption.currency || walletCurrency)}</p>
                         <Badge className={`${getStatusColor(redemption.status)} flex items-center gap-1`}>
                           {getStatusIcon(redemption.status)}
                           {redemption.status.toUpperCase()}
@@ -254,7 +256,7 @@ export default function MyAccount() {
                     </div>
                   </div>
                   <p className={`text-lg font-bold ${tx.type === "credit" ? "text-green-600" : "text-red-600"}`}>
-                    {tx.type === "credit" ? "+" : "-"}${tx.amount}
+                    {tx.type === "credit" ? "+" : "-"}{formatCurrencyValue(Math.abs(tx.amount || 0), tx.currency || walletCurrency)}
                   </p>
                 </div>
               ))}
@@ -265,5 +267,3 @@ export default function MyAccount() {
     </div>
   );
 }
-
-

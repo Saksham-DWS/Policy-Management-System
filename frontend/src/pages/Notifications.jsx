@@ -22,7 +22,7 @@ export default function Notifications() {
   const markAllRead = api.notifications.markAllRead.useMutation({
     onSuccess: () => refetch(),
   });
-
+ 
   const unreadCount = useMemo(
     () => (notifications || []).filter((notification) => !notification.readAt).length,
     [notifications]

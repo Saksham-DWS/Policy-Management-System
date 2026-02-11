@@ -6,7 +6,7 @@ import { z } from "zod";
 import { COOKIE_NAME, UNAUTHED_ERR_MSG } from "./shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies.js";
 import { authenticateRequest } from "./_core/auth.js";
-import {
+import { 
     BadRequestError,
     ForbiddenError,
     HttpError,
@@ -24,6 +24,12 @@ import {
 import { deleteGridFSFile, saveBufferToGridFS, streamGridFSFile } from "./_core/files.js";
 import { buildTimelinePdf } from "./_core/pdf.js";
 import { ENV } from "./_core/env.js";
+import {
+    CURRENCY_VALUES,
+    formatCurrencyAmount,
+    getCurrencyByEmployeeType,
+    normalizeCurrency,
+} from "./shared/currency.js";
  
 const ROLE_OPTIONS = ["admin", "hod", "employee", "account"];
 const EMPLOYEE_TYPES = [
@@ -71,6 +77,9 @@ const creditRequestUpload = multer({
 });
 
 const normalizeEmployeeType = (type) => (type === "permanent" ? "permanent_india" : type);
+const getUserCurrency = (user) =>
+    normalizeCurrency(user?.currency, getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType)));
+const formatMoney = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
 
 const asyncHandler = (handler) => (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
@@ -211,6 +220,10 @@ async function hydrateCreditRequests(requests) {
         initiator: userMap.get(request.initiatorId) || null,
         hod: request.hodId ? userMap.get(request.hodId) || null : null,
         policy: request.policyId ? policyMap.get(request.policyId) || null : null,
+        currency: normalizeCurrency(
+            request.currency,
+            getUserCurrency(userMap.get(request.userId) || null),
+        ),
     }));
 }
 
@@ -224,6 +237,10 @@ async function hydrateRedemptionRequests(requests) {
     return requests.map((request) => ({
         ...request,
         user: userMap.get(request.userId) || null,
+        currency: normalizeCurrency(
+            request.currency,
+            getUserCurrency(userMap.get(request.userId) || null),
+        ),
     }));
 }
 
@@ -1177,6 +1194,7 @@ export function createRestRouter() {
             if (!user.hodId) {
                 throw BadRequestError("User has no HOD assigned.");
             }
+            const requestCurrency = getUserCurrency(user);
             const isAdminOrHod = ctxUser.role === "admin" || ctxUser.role === "hod";
             let policyForEmail = null;
             if (input.type === "policy") {
@@ -1228,6 +1246,7 @@ export function createRestRouter() {
                     metadata: {
                         type: input.type,
                         amount: input.amount,
+                        currency: requestCurrency,
                         employeeName: user?.name,
                         employeeEmail: user?.email,
                         policyName: policyForEmail?.name,
@@ -1244,6 +1263,7 @@ export function createRestRouter() {
                 bonus: input.bonus,
                 deductions: input.deductions,
                 amount: input.amount,
+                currency: requestCurrency,
                 amountItems: (input.amountItems || []).map((item) => ({
                     amount: item.amount,
                     note: item.note,
@@ -1279,7 +1299,7 @@ export function createRestRouter() {
                 await db.createNotification({
                     userId: user.hodId,
                     title: "Credit request pending approval",
-                    message: `${user.name || user.email} has a $${input.amount} credit request awaiting your approval.`,
+                    message: `${user.name || user.email} has a ${formatMoney(input.amount, requestCurrency)} credit request awaiting your approval.`,
                     type: "action",
                     actionUrl: "/approvals",
                 });
@@ -1293,6 +1313,7 @@ export function createRestRouter() {
                         employee: user,
                         initiator: ctxUser,
                         amount: input.amount,
+                        currency: requestCurrency,
                         details: input.notes,
                         attachments: input.attachments || [],
                         requestType: "freelancer",
@@ -1314,6 +1335,7 @@ export function createRestRouter() {
                         employee: user,
                         initiator: ctxUser,
                         amount: input.amount,
+                        currency: requestCurrency,
                         details: policyDetails,
                         attachments: input.attachments || [],
                         requestType: "policy",
@@ -1329,7 +1351,7 @@ export function createRestRouter() {
                             db.createNotification({
                                 userId: admin._id.toString(),
                                 title: "Policy request pending approval",
-                                message: `${user.name || user.email} has a $${input.amount} policy request${policyForEmail?.name ? ` (${policyForEmail.name})` : ""} awaiting approval.`,
+                                message: `${user.name || user.email} has a ${formatMoney(input.amount, requestCurrency)} policy request${policyForEmail?.name ? ` (${policyForEmail.name})` : ""} awaiting approval.`,
                                 type: "action",
                                 actionUrl: "/approvals",
                             }),
@@ -1343,6 +1365,7 @@ export function createRestRouter() {
                                 employee: user,
                                 initiator: ctxUser,
                                 amount: input.amount,
+                                currency: requestCurrency,
                                 details: policyForEmail?.name
                                     ? `Policy: ${policyForEmail.name}${input.notes ? ` | ${input.notes}` : ""}`
                                     : input.notes,
@@ -1366,6 +1389,7 @@ export function createRestRouter() {
                         user.email || "",
                         user.name || "",
                         input.amount,
+                        requestCurrency,
                         `Policy: ${input.policyId} | Notes: ${input.notes || "N/A"} | Breakdown: ${input.calculationBreakdown || "N/A"}`,
                     );
                     res.json({
@@ -1495,6 +1519,7 @@ export function createRestRouter() {
             if (request.status !== "pending_approval") {
                 throw BadRequestError("Only pending approvals can be approved.");
             }
+            const requestCurrency = normalizeCurrency(request.currency);
             if (request.type === "freelancer") {
                 const timelineLog = appendTimelineEntry(
                     request.timelineLog,
@@ -1521,7 +1546,7 @@ export function createRestRouter() {
                 await db.createNotification({
                     userId: request.userId,
                     title: "Approval required",
-                    message: `Your freelancer incentive for $${request.amount.toFixed(2)} is awaiting your approval.`,
+                    message: `Your freelancer incentive for ${formatMoney(request.amount, requestCurrency)} is awaiting your approval.`,
                     type: "action",
                     actionUrl: "/approvals",
                 });
@@ -1560,6 +1585,7 @@ export function createRestRouter() {
                 userId: request.userId,
                 type: "credit",
                 amount: request.amount,
+                currency: requestCurrency,
                 creditRequestId: request._id?.toString(),
                 description: request.type === "freelancer" ? "Freelancer Amount" : "Policy Credit",
                 balance: newBalance,
@@ -1575,7 +1601,7 @@ export function createRestRouter() {
             await db.createNotification({
                 userId: request.userId,
                 title: "Credit request approved",
-                message: `Your credit request for $${request.amount.toFixed(2)} was approved.`,
+                message: `Your credit request for ${formatMoney(request.amount, requestCurrency)} was approved.`,
                 type: "success",
                 actionUrl: "/transactions",
             });
@@ -1650,6 +1676,7 @@ export function createRestRouter() {
                         employee,
                         hod: hodUser,
                         amount: request.amount,
+                        currency: request.currency,
                         reason: input.reason,
                         rejectedBy: hodUser?.name || hodUser?.email || "HOD",
                         requestType: request.type,
@@ -1675,6 +1702,7 @@ export function createRestRouter() {
             if (request.status !== "pending_employee_approval") {
                 throw BadRequestError("Only pending employee approvals can be approved.");
             }
+            const requestCurrency = normalizeCurrency(request.currency, getCurrencyByEmployeeType(ctxUser.employeeType));
             const currentBalance = await db.getWalletBalance(request.userId.toString());
             const newBalance = currentBalance + request.amount;
             let timelineLog = appendTimelineEntry(
@@ -1705,6 +1733,7 @@ export function createRestRouter() {
                 userId: request.userId,
                 type: "credit",
                 amount: request.amount,
+                currency: requestCurrency,
                 creditRequestId: request._id?.toString(),
                 description: "Freelancer Amount",
                 balance: newBalance,
@@ -1779,6 +1808,7 @@ export function createRestRouter() {
                         employee: ctxUser,
                         hod: hodUser,
                         amount: request.amount,
+                        currency: request.currency,
                         reason: input.reason,
                         rejectedBy: ctxUser.name || ctxUser.email,
                         requestType: request.type,
@@ -1797,11 +1827,12 @@ export function createRestRouter() {
         "/wallet/balance",
         asyncHandler(async (req, res) => {
             const ctxUser = requireAuth(req);
-            const [balance, summary] = await Promise.all([
-                db.getWalletBalance(ctxUser.id),
+            const [wallet, summary] = await Promise.all([
+                db.getWalletByUserId(ctxUser.id),
                 db.getWalletSummary(ctxUser.id),
             ]);
-            res.json({ balance, ...summary });
+            const currency = normalizeCurrency(wallet?.currency, getUserCurrency(ctxUser));
+            res.json({ balance: wallet?.balance || 0, currency, ...summary });
         }),
     );
 
@@ -1836,6 +1867,7 @@ export function createRestRouter() {
                 throw BadRequestError("Selected credit has already been redeemed.");
             }
             const amount = Number(creditTxn.amount || 0);
+            const redemptionCurrency = normalizeCurrency(creditTxn.currency, getUserCurrency(ctxUser));
             const balanceBefore = await db.getWalletBalance(ctxUser.id.toString());
             if (balanceBefore < amount) {
                 throw BadRequestError("Insufficient balance");
@@ -1850,12 +1882,14 @@ export function createRestRouter() {
                     metadata: {
                         creditTransactionId: creditTxn._id?.toString(),
                         amount,
+                        currency: redemptionCurrency,
                     },
                 }),
             );
             const redemption = await db.createRedemptionRequest({
                 userId: ctxUser.id,
                 amount,
+                currency: redemptionCurrency,
                 notes: input.notes,
                 creditTransactionId: creditTxn._id?.toString(),
                 timelineLog,
@@ -1865,6 +1899,7 @@ export function createRestRouter() {
                 userId: ctxUser.id,
                 type: "debit",
                 amount,
+                currency: redemptionCurrency,
                 redemptionRequestId: redemption._id?.toString(),
                 linkedCreditTxnId: creditTxn._id?.toString(),
                 description: "Redemption",
@@ -1881,6 +1916,7 @@ export function createRestRouter() {
                     title: "Wallet Redemption Proof",
                     employee: { name: ctxUser.name, email: ctxUser.email },
                     amount,
+                    currency: redemptionCurrency,
                     timelineLog,
                     creditTransactionId: creditTxn._id?.toString(),
                     redemptionId: redemption._id?.toString(),
@@ -1911,7 +1947,7 @@ export function createRestRouter() {
             await db.createNotification({
                 userId: ctxUser.id,
                 title: "Redemption request submitted",
-                message: `Your redemption request for $${amount.toFixed(2)} was submitted.`,
+                message: `Your redemption request for ${formatMoney(amount, redemptionCurrency)} was submitted.`,
                 type: "info",
                 actionUrl: "/my-account",
             });
@@ -1921,7 +1957,7 @@ export function createRestRouter() {
                     await db.createNotification({
                         userId: user._id.toString(),
                         title: "New redemption request",
-                        message: `A redemption request for $${amount.toFixed(2)} is waiting to be processed.`,
+                        message: `A redemption request for ${formatMoney(amount, redemptionCurrency)} is waiting to be processed.`,
                         type: "action",
                         actionUrl: "/accounts",
                     });
@@ -1931,6 +1967,7 @@ export function createRestRouter() {
                             accountName: user.name,
                             employee: { name: ctxUser.name, email: ctxUser.email },
                             amount,
+                            currency: redemptionCurrency,
                             balanceBefore,
                             balanceAfter,
                             redemptionId: redemption._id?.toString(),
@@ -1976,12 +2013,21 @@ export function createRestRouter() {
                     requestId: z.string(),
                     transactionReference: z.string(),
                     paymentNotes: z.string().optional(),
+                    paymentCurrency: z.enum(CURRENCY_VALUES).optional(),
                 }),
                 req.body,
             );
             const request = await db.getRedemptionRequestById(input.requestId);
             if (!request) {
                 throw NotFoundError("Not found");
+            }
+            const employee = await db.getUserById(request.userId?.toString?.() || request.userId);
+            const expectedCurrency = normalizeCurrency(request.currency, getUserCurrency(employee));
+            const processedCurrency = normalizeCurrency(input.paymentCurrency, expectedCurrency);
+            if (processedCurrency !== expectedCurrency) {
+                throw BadRequestError(
+                    `Payment currency mismatch. This request must be processed in ${expectedCurrency}.`,
+                );
             }
             const timelineLog = appendTimelineEntry(
                 request.timelineLog,
@@ -1991,30 +2037,36 @@ export function createRestRouter() {
                     actor: ctxUser,
                     signatureId: ctxUser.id,
                     message: "Redemption processed",
-                    metadata: { transactionReference: input.transactionReference },
+                    metadata: {
+                        transactionReference: input.transactionReference,
+                        currency: processedCurrency,
+                    },
                 }),
             );
             await db.updateRedemptionRequest(input.requestId, {
                 status: "completed",
                 processedBy: ctxUser.id,
                 processedAt: new Date(),
+                currency: processedCurrency,
                 transactionReference: input.transactionReference,
                 paymentNotes: input.paymentNotes,
                 timelineLog,
             });
-            const employee = await db.getUserById(request.userId?.toString?.() || request.userId);
             // Debit is recorded when the redemption request is submitted.
             await db.createAuditLog({
                 userId: ctxUser.id,
                 action: "redemption_processed",
                 entityType: "redemption_request",
                 entityId: input.requestId,
-                details: JSON.stringify({ transactionReference: input.transactionReference }),
+                details: JSON.stringify({
+                    transactionReference: input.transactionReference,
+                    paymentCurrency: processedCurrency,
+                }),
             });
             await db.createNotification({
                 userId: request.userId,
                 title: "Redemption processed",
-                message: `Your redemption request for $${request.amount.toFixed(2)} has been processed. Reference: ${input.transactionReference}`,
+                message: `Your redemption request for ${formatMoney(request.amount, processedCurrency)} has been processed. Reference: ${input.transactionReference}`,
                 type: "success",
                 actionUrl: "/my-account",
             });
@@ -2023,6 +2075,7 @@ export function createRestRouter() {
                     to: employee?.email,
                     employeeName: employee?.name,
                     amount: request.amount,
+                    currency: processedCurrency,
                     transactionReference: input.transactionReference,
                     processedBy: ctxUser?.name || ctxUser?.email,
                     paymentNotes: input.paymentNotes,
@@ -2187,6 +2240,9 @@ export function createRestRouter() {
                     ? db.getAllRedemptionRequests()
                     : db.getRedemptionRequestsByUserIds(userIds),
             ]);
+            const userCurrencyMap = new Map(
+                users.map((user) => [user._id.toString(), getUserCurrency(user)]),
+            );
             const monthLabels = [];
             const now = new Date();
             for (let i = monthsBack - 1; i >= 0; i -= 1) {
@@ -2196,8 +2252,10 @@ export function createRestRouter() {
                     label: date.toLocaleString("default", { month: "short", year: "numeric" }),
                 });
             }
-            const buildMonthlySeries = (items, valueSelector) => {
-                const totals = new Map(monthLabels.map((label) => [label.key, 0]));
+            const buildMonthlySeries = (items, valueSelector, currencySelector) => {
+                const totals = new Map(
+                    monthLabels.map((label) => [label.key, { USD: 0, INR: 0, total: 0 }]),
+                );
                 items.forEach((item) => {
                     const date = new Date(item.createdAt);
                     if (Number.isNaN(date.getTime())) {
@@ -2207,20 +2265,37 @@ export function createRestRouter() {
                     if (!totals.has(key)) {
                         return;
                     }
-                    totals.set(key, totals.get(key) + valueSelector(item));
+                    const amount = Number(valueSelector(item) || 0);
+                    const currency = normalizeCurrency(currencySelector(item));
+                    const bucket = totals.get(key);
+                    bucket[currency] = (bucket[currency] || 0) + amount;
+                    bucket.total += amount;
+                    totals.set(key, bucket);
                 });
                 return monthLabels.map((label) => ({
                     month: label.label,
-                    value: totals.get(label.key) || 0,
+                    ...(totals.get(label.key) || { USD: 0, INR: 0, total: 0 }),
                 }));
             };
+            const sumByCurrency = (items, amountSelector, currencySelector) =>
+                items.reduce(
+                    (acc, item) => {
+                        const amount = Number(amountSelector(item) || 0);
+                        const currency = normalizeCurrency(currencySelector(item));
+                        acc[currency] = (acc[currency] || 0) + amount;
+                        return acc;
+                    },
+                    { USD: 0, INR: 0 },
+                );
             const creditsByMonth = buildMonthlySeries(
                 walletTransactions.filter((t) => t.type === "credit"),
                 (item) => item.amount,
+                (item) => item.currency || userCurrencyMap.get(item.userId),
             );
             const redemptionsByMonth = buildMonthlySeries(
                 walletTransactions.filter((t) => t.type === "debit"),
                 (item) => item.amount,
+                (item) => item.currency || userCurrencyMap.get(item.userId),
             );
             const policyCounts = creditRequests
                 .filter((request) => request.type === "policy" && request.policyId)
@@ -2244,16 +2319,27 @@ export function createRestRouter() {
                 acc[type] = (acc[type] || 0) + 1;
                 return acc;
             }, {});
-            const totalCredits = walletTransactions
-                .filter((t) => t.type === "credit")
-                .reduce((sum, t) => sum + t.amount, 0);
-            const totalRedemptions = walletTransactions
-                .filter((t) => t.type === "debit")
-                .reduce((sum, t) => sum + t.amount, 0);
+            const totalCreditsByCurrency = sumByCurrency(
+                walletTransactions.filter((t) => t.type === "credit"),
+                (item) => item.amount,
+                (item) => item.currency || userCurrencyMap.get(item.userId),
+            );
+            const totalRedemptionsByCurrency = sumByCurrency(
+                walletTransactions.filter((t) => t.type === "debit"),
+                (item) => item.amount,
+                (item) => item.currency || userCurrencyMap.get(item.userId),
+            );
+            const totalCredits = Object.values(totalCreditsByCurrency).reduce((sum, value) => sum + value, 0);
+            const totalRedemptions = Object.values(totalRedemptionsByCurrency).reduce(
+                (sum, value) => sum + value,
+                0,
+            );
             res.json({
                 totals: {
                     totalCredits,
+                    totalCreditsByCurrency,
                     totalRedemptions,
+                    totalRedemptionsByCurrency,
                     pendingApprovals: creditRequests.filter((r) => r.status === "pending_approval").length,
                     pendingSignatures: creditRequests.filter((r) => r.status === "pending_signature").length,
                     pendingRedemptions: redemptions.filter((r) => r.status === "pending").length,
@@ -2320,12 +2406,14 @@ export function createRestRouter() {
                     });
                     return;
                 }
-                const balance = await db.getWalletBalance(ctxUser.id.toString());
+                const wallet = await db.getWalletByUserId(ctxUser.id.toString());
                 const myRequests = await db.getCreditRequestsByUserId(ctxUser.id.toString());
                 const myPolicies = await db.getEmployeePolicyAssignmentsByUserId(ctxUser.id.toString());
                 const summary = await db.getWalletSummary(ctxUser.id.toString());
+                const userCurrency = normalizeCurrency(wallet?.currency, getUserCurrency(ctxUser));
                 res.json({
-                    walletBalance: balance,
+                    walletBalance: wallet?.balance || 0,
+                    currency: userCurrency,
                     pendingReviews: myRequests.filter(
                         (r) =>
                             r.status === "pending_signature" || r.status === "pending_employee_approval",

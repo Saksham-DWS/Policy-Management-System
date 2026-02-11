@@ -22,7 +22,7 @@ function BreadcrumbSeparator({ children, className, ...props }) {
     return (<li data-slot="breadcrumb-separator" role="presentation" aria-hidden="true" className={cn("[&>svg]:size-3.5", className)} {...props}>
       {children ?? <ChevronRight />}
     </li>);
-}
+} 
 function BreadcrumbEllipsis({ className, ...props }) {
     return (<span data-slot="breadcrumb-ellipsis" role="presentation" aria-hidden="true" className={cn("flex size-9 items-center justify-center", className)} {...props}>
       <MoreHorizontal className="size-4"/>

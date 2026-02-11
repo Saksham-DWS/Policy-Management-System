@@ -28,7 +28,7 @@ function Router() {
           <p className="text-gray-600">Loading...</p>
         </div>
       </div>);
-    }
+    } 
     if (!isAuthenticated) {
         return (<Switch>
         <Route path="/login" component={Login}/>

@@ -17,7 +17,7 @@ export default function MyTeam() {
         policyId: "",
         initiatorIds: [], 
         effectiveDate: "",
-    });
+    }); 
     const { data: team, isLoading, refetch } = api.team.getMyTeam.useQuery();
     const { data: policies } = api.policies.getAll.useQuery();
     const { data: allUsers } = api.users.getAll.useQuery();

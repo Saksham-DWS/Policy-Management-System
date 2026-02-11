@@ -21,7 +21,7 @@ export default function Policies() {
         eligibilityCriteria: "",
         calculationLogic: "",
         status: "active",
-    });
+    }); 
     const { data: policies, isLoading, refetch } = api.policies.getAll.useQuery();
     const createPolicy = api.policies.create.useMutation();
     const updatePolicy = api.policies.update.useMutation();

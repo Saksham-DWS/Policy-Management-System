@@ -17,7 +17,7 @@ const shouldLog = (level) => {
     const current = normalizeLevel(process.env.LOG_LEVEL);
     return LOG_LEVELS[level] <= LOG_LEVELS[current];
 };
-
+ 
 export const logger = {
     error: (...args) => {
         if (shouldLog("error")) {

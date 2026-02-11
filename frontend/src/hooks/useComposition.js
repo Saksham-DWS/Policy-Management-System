@@ -13,7 +13,7 @@ export function useComposition(options = {}) {
         if (timer2.current) {
             clearTimeout(timer2.current);
             timer2.current = null;
-        }
+        } 
         c.current = true;
         originalOnCompositionStart?.(e);
     });

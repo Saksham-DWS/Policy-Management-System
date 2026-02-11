@@ -29,7 +29,7 @@ const getMenuItems = (role, { showEmployeeManagement = false, showEmployeeApprov
             (item.path === "/employees" && showEmployeeManagement) ||
             (item.path === "/approvals" && showEmployeeApprovals),
     );
-};
+}; 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
 const MIN_WIDTH = 200;

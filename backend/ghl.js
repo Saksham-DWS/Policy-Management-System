@@ -2,6 +2,8 @@
  * GoHighLevel API Integration
  * Handles document creation and contact management
  */
+import { formatCurrencyAmount, normalizeCurrency } from "./shared/currency.js";
+
 const GHL_API_KEY = "pit-6e8fd509-31e7-44fd-8182-bf77af82250a";
 const GHL_LOCATION_ID = "2xEjfVQAkuHg30MBhtW1";
 const GHL_API_VERSION = "2021-07-28";
@@ -82,7 +84,7 @@ async function updateContactCustomFields(contactId, customFields) {
  * @param projectDetails - Project details and notes
  * @returns Contact ID
  */
-export async function createFreelancerDocument(email, name, amount, projectDetails) {
+export async function createFreelancerDocument(email, name, amount, projectDetails, currency) {
     try {
         console.log(`[GHL] Creating document for ${email}`);
         // 1. Upsert contact
@@ -91,7 +93,7 @@ export async function createFreelancerDocument(email, name, amount, projectDetai
         // 2. Update custom fields
         await updateContactCustomFields(contactId, {
             name: name,
-            submit_feedback: `Amount: $${amount} | ${projectDetails}`,
+            submit_feedback: `Amount: ${formatCurrencyAmount(amount, normalizeCurrency(currency))} | ${projectDetails}`,
         });
         console.log(`[GHL] Updated custom fields`);
         // 3. Add tag to trigger workflow
@@ -104,8 +106,8 @@ export async function createFreelancerDocument(email, name, amount, projectDetai
         throw error;
     }
 }
-export async function createSignatureDocument(email, name, amount, projectDetails) {
-    return createFreelancerDocument(email, name, amount, projectDetails);
+export async function createSignatureDocument(email, name, amount, currency, projectDetails) {
+    return createFreelancerDocument(email, name, amount, projectDetails, currency);
 }
 /**
  * Get document status (if needed)

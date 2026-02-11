@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Loader2, CheckCircle, XCircle, Clock, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
 export default function Approvals() {
     const { user } = useAuth();
     const [selectedRequest, setSelectedRequest] = useState(null);
@@ -27,7 +28,7 @@ export default function Approvals() {
             setIsDialogOpen(false);
             setSelectedRequest(null);
             refetch(); 
-        },
+        }, 
         onError: (error) => {
             toast.error(error.message);
         },
@@ -139,6 +140,7 @@ export default function Approvals() {
                 {sortedRequests.map((request) => {
                   const requestId = request._id?.toString();
                   const statusMeta = statusConfig(request.status);
+                  const requestCurrency = request.currency || getUserCurrency(request.user);
                   const isActionable = isManager
                     ? request.status === "pending_approval"
                     : request.status === "pending_employee_approval";
@@ -180,8 +182,8 @@ export default function Approvals() {
                       </div>
                       <div className="flex items-center gap-3 md:gap-4 shrink-0">
                         <div className="text-right">
-                          <p className="text-lg font-semibold text-green-600">${request.amount?.toFixed(2)}</p>
-                          <p className="text-[11px] text-muted-foreground">Base: ${request.baseAmount}</p>
+                          <p className="text-lg font-semibold text-green-600">{formatCurrencyValue(request.amount, requestCurrency)}</p>
+                          <p className="text-[11px] text-muted-foreground">Base: {formatCurrencyValue(request.baseAmount, requestCurrency)}</p>
                         </div>
                         <div className="flex gap-2">
                           <Button
@@ -227,7 +229,7 @@ export default function Approvals() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Amount:</span>
-                  <span className="text-sm font-bold text-green-600">${selectedRequest.amount?.toFixed(2)}</span>
+                  <span className="text-sm font-bold text-green-600">{formatCurrencyValue(selectedRequest.amount, selectedRequest.currency || getUserCurrency(selectedRequest.user))}</span>
                 </div>
                 {selectedRequest.policy && (<div className="flex justify-between">
                     <span className="text-sm font-medium">Policy:</span>
@@ -306,5 +308,4 @@ export default function Approvals() {
       </Dialog>
     </div>);
 }
-
 

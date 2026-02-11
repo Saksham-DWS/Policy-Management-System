@@ -9,7 +9,7 @@ var LOG_LEVELS = {
   warn: 1,
   info: 2,
   debug: 3
-}; 
+};
 var normalizeLevel = (value) => {
   if (!value) {
     return "info";
@@ -69,10 +69,14 @@ if (!mongoUri) {
 
 // _core/index.js
 import express3 from "express";
+import path5 from "path";
 import { createServer } from "http";
 
 // rest.js
 import express from "express";
+import fs2 from "fs";
+import path3 from "path";
+import multer from "multer";
 import { z } from "zod";
 
 // shared/const.js
@@ -121,6 +125,64 @@ import { jwtVerify } from "jose";
 
 // models.js
 import mongoose, { Schema } from "mongoose";
+
+// shared/currency.js
+var CURRENCY_VALUES = ["USD", "INR"];
+var DEFAULT_CURRENCY = "INR";
+var CURRENCY_TO_LOCALE = {
+  USD: "en-US",
+  INR: "en-IN"
+};
+var CURRENCY_ALIASES = {
+  $: "USD",
+  usd: "USD",
+  dollar: "USD",
+  dollars: "USD",
+  "us dollar": "USD",
+  inr: "INR",
+  rs: "INR",
+  rupee: "INR",
+  rupees: "INR",
+  "indian rupee": "INR",
+  "\u20B9": "INR"
+};
+function normalizeCurrency(value, fallback = DEFAULT_CURRENCY) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (CURRENCY_VALUES.includes(trimmed.toUpperCase())) {
+      return trimmed.toUpperCase();
+    }
+    const mapped = CURRENCY_ALIASES[trimmed.toLowerCase()];
+    if (mapped) {
+      return mapped;
+    }
+  }
+  return fallback;
+}
+function getCurrencyByEmployeeType(employeeType) {
+  const normalized = (employeeType || "").toString().trim().toLowerCase();
+  if (normalized.includes("usa")) {
+    return "USD";
+  }
+  return "INR";
+}
+function getCurrencyLocale(currency) {
+  return CURRENCY_TO_LOCALE[normalizeCurrency(currency)] || CURRENCY_TO_LOCALE[DEFAULT_CURRENCY];
+}
+function formatCurrencyAmount(amount, currency, options = {}) {
+  const safeCurrency = normalizeCurrency(currency);
+  const locale = getCurrencyLocale(safeCurrency);
+  const value = Number.isFinite(Number(amount)) ? Number(amount) : 0;
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: safeCurrency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    ...options
+  }).format(value);
+}
+
+// models.js
 var shouldSyncCollections = () => {
   if (process.env.SYNC_DB_ON_START === "true") {
     return true;
@@ -160,6 +222,10 @@ var UserSchema = new Schema({
     default: "employee",
     required: true
   },
+  isEmployee: {
+    type: Boolean,
+    default: false
+  },
   employeeType: {
     type: String,
     enum: EMPLOYEE_TYPE_VALUES,
@@ -169,6 +235,32 @@ var UserSchema = new Schema({
   lastSignedIn: { type: Date, default: Date.now }
 }, { timestamps: true });
 var User = mongoose.models.User || mongoose.model("User", UserSchema);
+var AttachmentSchema = new Schema(
+  {
+    originalName: String,
+    filename: String,
+    fileId: String,
+    mimeType: String,
+    size: Number,
+    url: String,
+    uploadedAt: { type: Date, default: Date.now }
+  },
+  { _id: true }
+);
+var TimelineEntrySchema = new Schema(
+  {
+    step: { type: String, required: true },
+    role: { type: String, required: true },
+    actorId: String,
+    actorName: String,
+    actorEmail: String,
+    signatureId: String,
+    message: String,
+    metadata: Schema.Types.Mixed,
+    at: { type: Date, default: Date.now }
+  },
+  { _id: true }
+);
 var PolicySchema = new Schema({
   name: { type: String, required: true },
   description: String,
@@ -178,6 +270,7 @@ var PolicySchema = new Schema({
   eligibilityCriteria: String,
   reRaiseAllowed: { type: Boolean, default: false },
   proofRequired: { type: Boolean, default: true },
+  attachments: [AttachmentSchema],
   status: {
     type: String,
     enum: ["active", "draft", "archived"],
@@ -233,26 +326,58 @@ var CreditRequestSchema = new Schema({
   bonus: { type: Number, default: 0 },
   deductions: { type: Number, default: 0 },
   amount: { type: Number, required: true },
+  currency: {
+    type: String,
+    enum: CURRENCY_VALUES,
+    default: DEFAULT_CURRENCY,
+    required: true
+  },
+  amountItems: [
+    {
+      amount: { type: Number, required: true },
+      note: String,
+      addedBy: String,
+      addedAt: { type: Date, default: Date.now }
+    }
+  ],
   calculationBreakdown: String,
   notes: String,
   documents: String,
+  attachments: [AttachmentSchema],
   status: {
     type: String,
-    enum: ["pending_signature", "pending_approval", "approved", "rejected_by_user", "rejected_by_hod"],
+    enum: [
+      "pending_signature",
+      "pending_approval",
+      "pending_employee_approval",
+      "approved",
+      "rejected_by_user",
+      "rejected_by_employee",
+      "rejected_by_hod"
+    ],
     default: "pending_signature",
     required: true
   },
   userSignature: String,
   userSignedAt: Date,
   userRejectionReason: String,
+  employeeApprovedAt: Date,
+  employeeRejectedAt: Date,
   hodApprovedAt: Date,
   hodRejectedAt: Date,
-  hodRejectionReason: String
+  hodRejectionReason: String,
+  timelineLog: [TimelineEntrySchema]
 }, { timestamps: true });
 var CreditRequest = mongoose.models.CreditRequest || mongoose.model("CreditRequest", CreditRequestSchema);
 var WalletSchema = new Schema({
   userId: { type: String, required: true, unique: true, index: true },
   balance: { type: Number, default: 0 },
+  currency: {
+    type: String,
+    enum: CURRENCY_VALUES,
+    default: DEFAULT_CURRENCY,
+    required: true
+  },
   updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 var Wallet = mongoose.models.Wallet || mongoose.model("Wallet", WalletSchema);
@@ -264,9 +389,18 @@ var WalletTransactionSchema = new Schema({
     required: true
   },
   amount: { type: Number, required: true },
+  currency: {
+    type: String,
+    enum: CURRENCY_VALUES,
+    default: DEFAULT_CURRENCY,
+    required: true
+  },
   balance: { type: Number, required: true },
   creditRequestId: String,
   redemptionRequestId: String,
+  linkedCreditTxnId: String,
+  redeemed: { type: Boolean, default: false },
+  timelineLog: [TimelineEntrySchema],
   description: String
 }, { timestamps: true });
 var WalletTransaction = mongoose.models.WalletTransaction || mongoose.model("WalletTransaction", WalletTransactionSchema);
@@ -283,9 +417,22 @@ var Notification = mongoose.models.Notification || mongoose.model("Notification"
 var RedemptionRequestSchema = new Schema({
   userId: { type: String, required: true },
   amount: { type: Number, required: true },
-  method: { type: String, required: true },
+  currency: {
+    type: String,
+    enum: CURRENCY_VALUES,
+    default: DEFAULT_CURRENCY,
+    required: true
+  },
+  method: { type: String },
   bankDetails: String,
   notes: String,
+  creditTransactionId: String,
+  timelineLog: [TimelineEntrySchema],
+  proofPdf: {
+    filename: String,
+    url: String,
+    generatedAt: Date
+  },
   status: {
     type: String,
     enum: ["pending", "processing", "completed", "rejected"],
@@ -393,13 +540,24 @@ function normalizeRoleValue(role) {
 function normalizeEmployeeTypeValue(employeeType) {
   return LEGACY_EMPLOYEE_TYPE_MAP[employeeType] || employeeType;
 }
+function normalizeEmailValue(email) {
+  return typeof email === "string" ? email.trim().toLowerCase() : email;
+}
+function normalizeCurrencyValue(currency, employeeType) {
+  return normalizeCurrency(currency, getCurrencyByEmployeeType(normalizeEmployeeTypeValue(employeeType)));
+}
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function normalizeUserRecord(user) {
   if (!user)
     return user;
+  const normalizedEmployeeType = normalizeEmployeeTypeValue(user.employeeType);
   return {
     ...user,
     role: normalizeRoleValue(user.role),
-    employeeType: normalizeEmployeeTypeValue(user.employeeType)
+    employeeType: normalizedEmployeeType,
+    currency: normalizeCurrencyValue(user.currency, normalizedEmployeeType)
   };
 }
 function normalizeUserList(users) {
@@ -422,7 +580,9 @@ async function getUserById(id) {
 }
 async function getUserByEmail(email) {
   await ensureConnection();
-  const user = await User.findOne({ email }).select("+password").lean();
+  const normalizedEmail = normalizeEmailValue(email || "");
+  const matcher = normalizedEmail ? new RegExp(`^${escapeRegex(normalizedEmail)}$`, "i") : email;
+  const user = await User.findOne({ email: matcher }).select("+password").lean();
   return normalizeUserRecord(user);
 }
 async function getUsersByIds(userIds) {
@@ -453,10 +613,13 @@ async function getUsersByHod(hodId) {
 }
 async function createUser(userData) {
   await ensureConnection();
+  const normalizedEmployeeType = normalizeEmployeeTypeValue(userData.employeeType);
   const dataToSave = {
     ...userData,
     role: normalizeRoleValue(userData.role),
-    employeeType: normalizeEmployeeTypeValue(userData.employeeType)
+    employeeType: normalizedEmployeeType,
+    currency: normalizeCurrencyValue(userData.currency, normalizedEmployeeType),
+    email: normalizeEmailValue(userData.email)
   };
   if (userData.password) {
     const bcrypt = await import("bcryptjs");
@@ -471,8 +634,15 @@ async function updateUser(id, updates) {
   if (updates.role !== void 0) {
     normalizedUpdates.role = normalizeRoleValue(updates.role);
   }
-  if (updates.employeeType !== void 0) {
-    normalizedUpdates.employeeType = normalizeEmployeeTypeValue(updates.employeeType);
+  const normalizedEmployeeType = updates.employeeType !== void 0 ? normalizeEmployeeTypeValue(updates.employeeType) : void 0;
+  if (normalizedEmployeeType !== void 0) {
+    normalizedUpdates.employeeType = normalizedEmployeeType;
+  }
+  if (updates.currency !== void 0 || normalizedEmployeeType !== void 0) {
+    normalizedUpdates.currency = normalizeCurrencyValue(updates.currency, normalizedEmployeeType);
+  }
+  if (updates.email !== void 0) {
+    normalizedUpdates.email = normalizeEmailValue(updates.email);
   }
   if (updates.password) {
     const bcrypt = await import("bcryptjs");
@@ -504,6 +674,20 @@ async function createPolicy(policyData) {
   await ensureConnection();
   const policy = await Policy.create(policyData);
   return policy.toObject();
+}
+async function addPolicyAttachments(policyId, attachments) {
+  await ensureConnection();
+  const updated = await Policy.findByIdAndUpdate(policyId, {
+    $push: { attachments: { $each: attachments } }
+  }, { new: true }).lean();
+  return updated;
+}
+async function removePolicyAttachment(policyId, attachmentId) {
+  await ensureConnection();
+  const updated = await Policy.findByIdAndUpdate(policyId, {
+    $pull: { attachments: { _id: attachmentId } }
+  }, { new: true }).lean();
+  return updated;
 }
 async function updatePolicy(id, updates) {
   await ensureConnection();
@@ -598,32 +782,72 @@ async function getEmployeeInitiatorsByInitiatorId(initiatorId) {
 }
 async function createCreditRequest(data) {
   await ensureConnection();
-  const request = await CreditRequest.create(data);
+  const request = await CreditRequest.create({
+    ...data,
+    currency: normalizeCurrency(data.currency, DEFAULT_CURRENCY)
+  });
   return request.toObject();
+}
+async function resolveCurrencyByUserIds(userIds) {
+  const uniqueIds = Array.from(new Set((userIds || []).filter(Boolean).map((id) => id.toString())));
+  if (uniqueIds.length === 0) {
+    return /* @__PURE__ */ new Map();
+  }
+  const users = await User.find({ _id: { $in: uniqueIds } }).select("_id employeeType currency").lean();
+  return new Map(
+    users.map((user) => [
+      user._id.toString(),
+      normalizeCurrencyValue(user.currency, user.employeeType)
+    ])
+  );
+}
+function normalizeCreditRequestCurrency(request, userCurrencyMap) {
+  if (!request) {
+    return request;
+  }
+  return {
+    ...request,
+    currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY)
+  };
 }
 async function getCreditRequestById(id) {
   await ensureConnection();
-  return await CreditRequest.findById(id).lean();
+  const request = await CreditRequest.findById(id).lean();
+  if (!request) {
+    return request;
+  }
+  const userCurrencyMap = await resolveCurrencyByUserIds([request.userId]);
+  return normalizeCreditRequestCurrency(request, userCurrencyMap);
 }
 async function getCreditRequestsByUserId(userId) {
   await ensureConnection();
-  return await CreditRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+  const requests = await CreditRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds([userId]);
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 async function getCreditRequestsByHod(hodId) {
   await ensureConnection();
-  return await CreditRequest.find({ hodId }).sort({ createdAt: -1 }).lean();
+  const requests = await CreditRequest.find({ hodId }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 async function getCreditRequestsByInitiator(initiatorId) {
   await ensureConnection();
-  return await CreditRequest.find({ initiatorId }).sort({ createdAt: -1 }).lean();
+  const requests = await CreditRequest.find({ initiatorId }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 async function getAllCreditRequests() {
   await ensureConnection();
-  return await CreditRequest.find().sort({ createdAt: -1 }).lean();
+  const requests = await CreditRequest.find().sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 async function getCreditRequestsByStatus(status) {
   await ensureConnection();
-  return await CreditRequest.find({ status }).sort({ createdAt: -1 }).lean();
+  const requests = await CreditRequest.find({ status }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 async function updateCreditRequest(id, updates) {
   await ensureConnection();
@@ -631,20 +855,48 @@ async function updateCreditRequest(id, updates) {
 }
 async function ensureWallet(userId) {
   await ensureConnection();
+  const user = await User.findById(userId).select("currency employeeType").lean();
+  const userCurrency = normalizeCurrencyValue(
+    user?.currency,
+    user?.employeeType
+  );
   let wallet = await Wallet.findOne({ userId }).lean();
   if (!wallet) {
-    const created = await Wallet.create({ userId, balance: 0, updatedAt: /* @__PURE__ */ new Date() });
+    const created = await Wallet.create({
+      userId,
+      balance: 0,
+      currency: userCurrency,
+      updatedAt: /* @__PURE__ */ new Date()
+    });
     wallet = created.toObject();
+  } else if (!wallet.currency) {
+    await Wallet.findOneAndUpdate(
+      { userId },
+      { $set: { currency: userCurrency, updatedAt: /* @__PURE__ */ new Date() } }
+    );
+    wallet = { ...wallet, currency: userCurrency };
   }
-  return wallet;
+  return {
+    ...wallet,
+    currency: normalizeCurrency(wallet.currency, userCurrency)
+  };
 }
 async function createWalletTransaction(data) {
   await ensureConnection();
-  const transaction = await WalletTransaction.create(data);
+  const wallet = await ensureWallet(data.userId);
+  const currency = normalizeCurrency(data.currency, wallet.currency);
+  const transaction = await WalletTransaction.create({
+    ...data,
+    currency
+  });
   await Wallet.findOneAndUpdate({ userId: data.userId }, {
-    $set: { balance: data.balance, updatedAt: /* @__PURE__ */ new Date() }
+    $set: { balance: data.balance, currency, updatedAt: /* @__PURE__ */ new Date() }
   }, { upsert: true });
   return transaction.toObject();
+}
+async function getWalletByUserId(userId) {
+  await ensureConnection();
+  return await ensureWallet(userId);
 }
 async function getWalletBalance(userId) {
   await ensureConnection();
@@ -653,15 +905,68 @@ async function getWalletBalance(userId) {
 }
 async function getWalletTransactions(userId) {
   await ensureConnection();
-  return await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
+  const wallet = await ensureWallet(userId);
+  const transactions = await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
+  return transactions.map((transaction) => ({
+    ...transaction,
+    currency: normalizeCurrency(transaction.currency, wallet.currency)
+  }));
+}
+async function getWalletTransactionById(id) {
+  await ensureConnection();
+  const transaction = await WalletTransaction.findById(id).lean();
+  if (!transaction) {
+    return transaction;
+  }
+  const wallet = await ensureWallet(transaction.userId);
+  return {
+    ...transaction,
+    currency: normalizeCurrency(transaction.currency, wallet.currency)
+  };
+}
+async function updateWalletTransaction(id, updates) {
+  await ensureConnection();
+  await WalletTransaction.findByIdAndUpdate(id, { $set: updates });
 }
 async function getWalletTransactionsByUserIds(userIds) {
   await ensureConnection();
-  return await WalletTransaction.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+  const [transactions, wallets, userCurrencyMap] = await Promise.all([
+    WalletTransaction.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean(),
+    Wallet.find({ userId: { $in: userIds } }).select("userId currency").lean(),
+    resolveCurrencyByUserIds(userIds)
+  ]);
+  const walletCurrencyMap = new Map(
+    wallets.map((wallet) => [wallet.userId, normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)])
+  );
+  return transactions.map((transaction) => ({
+    ...transaction,
+    currency: normalizeCurrency(
+      transaction.currency,
+      walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || DEFAULT_CURRENCY
+    )
+  }));
 }
 async function getAllWalletTransactions() {
   await ensureConnection();
-  return await WalletTransaction.find().sort({ createdAt: -1 }).lean();
+  const transactions = await WalletTransaction.find().sort({ createdAt: -1 }).lean();
+  if (transactions.length === 0) {
+    return transactions;
+  }
+  const userIds = Array.from(new Set(transactions.map((transaction) => transaction.userId).filter(Boolean)));
+  const [wallets, userCurrencyMap] = await Promise.all([
+    Wallet.find({ userId: { $in: userIds } }).select("userId currency").lean(),
+    resolveCurrencyByUserIds(userIds)
+  ]);
+  const walletCurrencyMap = new Map(
+    wallets.map((wallet) => [wallet.userId, normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)])
+  );
+  return transactions.map((transaction) => ({
+    ...transaction,
+    currency: normalizeCurrency(
+      transaction.currency,
+      walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || DEFAULT_CURRENCY
+    )
+  }));
 }
 async function createNotification(data) {
   await ensureConnection();
@@ -699,28 +1004,53 @@ async function getWalletSummary(userId) {
 }
 async function createRedemptionRequest(data) {
   await ensureConnection();
-  const request = await RedemptionRequest.create(data);
+  const request = await RedemptionRequest.create({
+    ...data,
+    currency: normalizeCurrency(data.currency, DEFAULT_CURRENCY)
+  });
   return request.toObject();
+}
+function normalizeRedemptionRequestCurrency(request, userCurrencyMap) {
+  if (!request) {
+    return request;
+  }
+  return {
+    ...request,
+    currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY)
+  };
 }
 async function getRedemptionRequestById(id) {
   await ensureConnection();
-  return await RedemptionRequest.findById(id).lean();
+  const request = await RedemptionRequest.findById(id).lean();
+  if (!request) {
+    return request;
+  }
+  const userCurrencyMap = await resolveCurrencyByUserIds([request.userId]);
+  return normalizeRedemptionRequestCurrency(request, userCurrencyMap);
 }
 async function getRedemptionRequestsByUserId(userId) {
   await ensureConnection();
-  return await RedemptionRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+  const requests = await RedemptionRequest.find({ userId }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds([userId]);
+  return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 async function getRedemptionRequestsByUserIds(userIds) {
   await ensureConnection();
-  return await RedemptionRequest.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+  const requests = await RedemptionRequest.find({ userId: { $in: userIds } }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(userIds);
+  return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 async function getAllRedemptionRequests() {
   await ensureConnection();
-  return await RedemptionRequest.find().sort({ createdAt: -1 }).lean();
+  const requests = await RedemptionRequest.find().sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 async function getRedemptionRequestsByStatus(status) {
   await ensureConnection();
-  return await RedemptionRequest.find({ status }).sort({ createdAt: -1 }).lean();
+  const requests = await RedemptionRequest.find({ status }).sort({ createdAt: -1 }).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeRedemptionRequestCurrency(request, userCurrencyMap));
 }
 async function updateRedemptionRequest(id, updates) {
   await ensureConnection();
@@ -816,13 +1146,20 @@ var getSessionSecret = () => {
 async function authenticateRequest(req) {
   const cookies = parseCookies(req.headers.cookie);
   const sessionCookie = cookies.get(COOKIE_NAME);
-  if (!sessionCookie) {
-    throw ForbiddenError("No session cookie");
+  let sessionToken = sessionCookie;
+  if (!sessionToken) {
+    const authHeader = req.headers.authorization;
+    if (typeof authHeader === "string" && authHeader.toLowerCase().startsWith("bearer ")) {
+      sessionToken = authHeader.slice(7).trim();
+    }
+  }
+  if (!sessionToken) {
+    throw ForbiddenError("No session token");
   }
   let payload;
   try {
     const secretKey = getSessionSecret();
-    ({ payload } = await jwtVerify(sessionCookie, secretKey, {
+    ({ payload } = await jwtVerify(sessionToken, secretKey, {
       algorithms: ["HS256"]
     }));
   } catch (error) {
@@ -859,8 +1196,8 @@ function ghlHeaders() {
     LocationId: GHL_LOCATION_ID
   };
 }
-async function ghlJson(path3, { method = "GET", body } = {}) {
-  const res = await fetch(`${API_BASE}${path3}`, {
+async function ghlJson(path6, { method = "GET", body } = {}) {
+  const res = await fetch(`${API_BASE}${path6}`, {
     method,
     headers: ghlHeaders(),
     body: body ? JSON.stringify(body) : void 0
@@ -906,14 +1243,14 @@ async function updateContactCustomFields(contactId, customFields) {
     }
   });
 }
-async function createFreelancerDocument(email, name, amount, projectDetails) {
+async function createFreelancerDocument(email, name, amount, projectDetails, currency) {
   try {
     console.log(`[GHL] Creating document for ${email}`);
     const contactId = await upsertContactByEmail(email);
     console.log(`[GHL] Contact ID: ${contactId}`);
     await updateContactCustomFields(contactId, {
       name,
-      submit_feedback: `Amount: $${amount} | ${projectDetails}`
+      submit_feedback: `Amount: ${formatCurrencyAmount(amount, normalizeCurrency(currency))} | ${projectDetails}`
     });
     console.log(`[GHL] Updated custom fields`);
     await addTag(contactId, "+offer-letter");
@@ -924,8 +1261,414 @@ async function createFreelancerDocument(email, name, amount, projectDetails) {
     throw error;
   }
 }
-async function createSignatureDocument(email, name, amount, projectDetails) {
-  return createFreelancerDocument(email, name, amount, projectDetails);
+async function createSignatureDocument(email, name, amount, currency, projectDetails) {
+  return createFreelancerDocument(email, name, amount, projectDetails, currency);
+}
+
+// _core/email.js
+import fs from "fs";
+import path2 from "path";
+import nodemailer from "nodemailer";
+
+// _core/files.js
+import mongoose2 from "mongoose";
+import { Readable } from "stream";
+var BUCKET_NAME = "uploads";
+var getBucket = async () => {
+  await connectDB();
+  if (!mongoose2.connection?.db) {
+    throw new Error("MongoDB connection is not ready");
+  }
+  return new mongoose2.mongo.GridFSBucket(mongoose2.connection.db, { bucketName: BUCKET_NAME });
+};
+var toObjectId = (id) => {
+  if (!id) {
+    return null;
+  }
+  return new mongoose2.Types.ObjectId(id);
+};
+async function saveBufferToGridFS({ buffer, filename, mimeType, metadata }) {
+  const bucket = await getBucket();
+  return await new Promise((resolve, reject) => {
+    const uploadStream = bucket.openUploadStream(filename || "file", {
+      contentType: mimeType,
+      metadata
+    });
+    Readable.from(buffer).pipe(uploadStream).on("error", reject).on("finish", () => {
+      resolve({
+        fileId: uploadStream.id.toString(),
+        filename: uploadStream.filename
+      });
+    });
+  });
+}
+async function getGridFSFileInfo(id) {
+  const bucket = await getBucket();
+  const objectId = toObjectId(id);
+  if (!objectId) {
+    return null;
+  }
+  const files = await bucket.find({ _id: objectId }).toArray();
+  return files?.[0] || null;
+}
+async function getGridFSFileBuffer(id) {
+  const bucket = await getBucket();
+  const objectId = toObjectId(id);
+  if (!objectId) {
+    return null;
+  }
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    bucket.openDownloadStream(objectId).on("data", (chunk) => chunks.push(chunk)).on("error", reject).on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+async function streamGridFSFile(id, res) {
+  const bucket = await getBucket();
+  const objectId = toObjectId(id);
+  if (!objectId) {
+    return false;
+  }
+  const file = await getGridFSFileInfo(id);
+  if (!file) {
+    return false;
+  }
+  res.setHeader("Content-Type", file.contentType || "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    `inline; filename="${file.filename || "file"}"`
+  );
+  bucket.openDownloadStream(objectId).pipe(res);
+  return true;
+}
+async function deleteGridFSFile(id) {
+  const bucket = await getBucket();
+  const objectId = toObjectId(id);
+  if (!objectId) {
+    return;
+  }
+  await bucket.delete(objectId);
+}
+
+// _core/email.js
+var getSmtpConfig = () => {
+  const secureValue = (process.env.SMTP_SECURE || "").toString().toLowerCase();
+  const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_FROM || process.env.SMTP_USER || "";
+  const fromName = process.env.SMTP_FROM_NAME || "";
+  const from = fromName && fromEmail ? `${fromName} <${fromEmail}>` : fromEmail;
+  const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
+  const secure = secureValue ? secureValue === "true" : port === 465;
+  return {
+    host: process.env.SMTP_HOST || "",
+    port,
+    secure,
+    user: process.env.SMTP_USER || "",
+    pass: process.env.SMTP_PASS || "",
+    from
+  };
+};
+var getTransport = () => {
+  const config = getSmtpConfig();
+  if (!config.host || !config.user || !config.pass) {
+    return null;
+  }
+  return {
+    transporter: nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      requireTLS: !config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass
+      }
+    }),
+    from: config.from
+  };
+};
+var resolveAttachmentPath = (filename) => path2.resolve(process.cwd(), "uploads", "credit-requests", filename);
+var formatMoney = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
+async function sendHodFreelancerRequestEmail({
+  to,
+  hodName,
+  employee,
+  initiator,
+  amount,
+  currency,
+  details,
+  attachments,
+  requestType
+}) {
+  if (!to) {
+    return { skipped: true, reason: "missing_recipient" };
+  }
+  const transport = getTransport();
+  if (!transport) {
+    console.warn("[Email] SMTP is not configured. Skipping HOD notification email.");
+    return { skipped: true, reason: "smtp_not_configured" };
+  }
+  const { transporter, from } = transport;
+  const typeLabel = requestType === "policy" ? "Policy incentive" : "Freelancer incentive";
+  const subject = `${typeLabel} request for ${employee?.name || employee?.email || "employee"}`;
+  const approvalBase = (process.env.FRONTEND_URL || "").replace(/\/+$/, "");
+  const approvalUrl = approvalBase ? `${approvalBase}/approvals` : "";
+  const textLines = [
+    `Hello ${hodName || ""},`,
+    "",
+    `A ${typeLabel.toLowerCase()} request has been submitted.`,
+    `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
+    `Initiator: ${initiator?.name || ""} (${initiator?.email || ""})`,
+    `Amount: ${formatMoney(amount, currency)}`,
+    details ? `Details: ${details}` : "",
+    "",
+    approvalUrl ? `Review the request: ${approvalUrl}` : "Please review the request in the approvals panel."
+  ].filter(Boolean);
+  const attachmentPayload = [];
+  for (const attachment of attachments || []) {
+    if (!attachment) {
+      continue;
+    }
+    if (attachment.fileId) {
+      try {
+        const content = await getGridFSFileBuffer(attachment.fileId);
+        if (content) {
+          attachmentPayload.push({
+            filename: attachment.originalName || attachment.filename || "attachment",
+            content,
+            contentType: attachment.mimeType
+          });
+        }
+        continue;
+      } catch (error) {
+        console.warn("[Email] Failed to load GridFS attachment:", error?.message || error);
+      }
+    }
+    if (!attachment.filename) {
+      continue;
+    }
+    const filepath = resolveAttachmentPath(attachment.filename);
+    if (!fs.existsSync(filepath)) {
+      continue;
+    }
+    attachmentPayload.push({
+      filename: attachment.originalName || attachment.filename,
+      path: filepath,
+      contentType: attachment.mimeType
+    });
+  }
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text: textLines.join("\n"),
+    attachments: attachmentPayload
+  });
+  return { success: true };
+}
+async function sendInitiatorFreelancerRejectionEmail({
+  to,
+  initiatorName,
+  employee,
+  hod,
+  amount,
+  currency,
+  reason,
+  rejectedBy,
+  requestType
+}) {
+  if (!to) {
+    return { skipped: true, reason: "missing_recipient" };
+  }
+  const transport = getTransport();
+  if (!transport) {
+    console.warn("[Email] SMTP is not configured. Skipping initiator rejection email.");
+    return { skipped: true, reason: "smtp_not_configured" };
+  }
+  const { transporter, from } = transport;
+  const typeLabel = requestType === "policy" ? "Policy incentive" : "Freelancer incentive";
+  const subject = `${typeLabel} request rejected for ${employee?.name || employee?.email || "employee"}`;
+  const textLines = [
+    `Hello ${initiatorName || ""},`,
+    "",
+    `A ${typeLabel.toLowerCase()} request has been rejected.`,
+    `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
+    hod ? `HOD: ${hod?.name || ""} (${hod?.email || ""})` : "",
+    rejectedBy ? `Rejected by: ${rejectedBy}` : "",
+    `Amount: ${formatMoney(amount, currency)}`,
+    reason ? `Reason: ${reason}` : ""
+  ].filter(Boolean);
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text: textLines.join("\n")
+  });
+  return { success: true };
+}
+async function sendRedemptionRequestEmail({
+  to,
+  accountName,
+  employee,
+  amount,
+  currency,
+  balanceBefore,
+  balanceAfter,
+  redemptionId,
+  timelineLog,
+  pdfAttachment
+}) {
+  if (!to) {
+    return { skipped: true, reason: "missing_recipient" };
+  }
+  const transport = getTransport();
+  if (!transport) {
+    console.warn("[Email] SMTP is not configured. Skipping redemption email.");
+    return { skipped: true, reason: "smtp_not_configured" };
+  }
+  const { transporter, from } = transport;
+  const subject = `Redemption request from ${employee?.name || employee?.email || "employee"}`;
+  const logLines = (timelineLog || []).map((entry, index) => {
+    const parts = [
+      `${index + 1}. ${entry.step || "STEP"}`,
+      entry.actorName || entry.actorEmail ? `Actor: ${entry.actorName || ""}${entry.actorEmail ? ` (${entry.actorEmail})` : ""}` : "",
+      entry.role ? `Role: ${entry.role}` : "",
+      entry.signatureId ? `Signature: ${entry.signatureId}` : "",
+      entry.message ? `Message: ${entry.message}` : "",
+      entry.at ? `At: ${new Date(entry.at).toLocaleString()}` : ""
+    ].filter(Boolean);
+    return parts.join(" | ");
+  });
+  const textLines = [
+    `Hello ${accountName || ""},`,
+    "",
+    "A redemption request has been submitted.",
+    `Employee: ${employee?.name || ""} (${employee?.email || ""})`,
+    redemptionId ? `Request ID: ${redemptionId}` : "",
+    `Amount: ${formatMoney(amount, currency)}`,
+    balanceBefore !== void 0 ? `Balance before: ${formatMoney(balanceBefore, currency)}` : "",
+    balanceAfter !== void 0 ? `Balance after: ${formatMoney(balanceAfter, currency)}` : "",
+    "",
+    "Timeline Log:",
+    ...logLines
+  ].filter(Boolean);
+  const attachments = [];
+  if (pdfAttachment?.content) {
+    attachments.push({
+      filename: pdfAttachment.filename || "redemption-proof.pdf",
+      content: pdfAttachment.content,
+      contentType: pdfAttachment.contentType || "application/pdf"
+    });
+  }
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text: textLines.join("\n"),
+    attachments
+  });
+  return { success: true };
+}
+async function sendRedemptionProcessedEmail({
+  to,
+  employeeName,
+  amount,
+  currency,
+  transactionReference,
+  processedBy,
+  paymentNotes,
+  redemptionId
+}) {
+  if (!to) {
+    return { skipped: true, reason: "missing_recipient" };
+  }
+  const transport = getTransport();
+  if (!transport) {
+    console.warn("[Email] SMTP is not configured. Skipping redemption processed email.");
+    return { skipped: true, reason: "smtp_not_configured" };
+  }
+  const { transporter, from } = transport;
+  const subject = "Redemption payment processed";
+  const textLines = [
+    `Hello ${employeeName || ""},`,
+    "",
+    "Your redemption request has been processed.",
+    redemptionId ? `Request ID: ${redemptionId}` : "",
+    `Amount: ${formatMoney(amount, currency)}`,
+    transactionReference ? `Transaction Reference: ${transactionReference}` : "",
+    processedBy ? `Processed by: ${processedBy}` : "",
+    paymentNotes ? `Notes: ${paymentNotes}` : "",
+    "",
+    "If you have any questions, please contact support."
+  ].filter(Boolean);
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text: textLines.join("\n")
+  });
+  return { success: true };
+}
+
+// _core/pdf.js
+import PDFDocument from "pdfkit";
+async function buildTimelinePdf({
+  title,
+  employee,
+  amount,
+  currency,
+  timelineLog,
+  creditTransactionId,
+  redemptionId
+}) {
+  const doc = new PDFDocument({ size: "A4", margin: 50 });
+  const chunks = [];
+  return await new Promise((resolve, reject) => {
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("error", reject);
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.fontSize(18).text(title || "Redemption Proof");
+    doc.moveDown();
+    doc.fontSize(12);
+    if (employee) {
+      doc.text(`Employee: ${employee.name || ""} (${employee.email || ""})`);
+    }
+    if (typeof amount === "number") {
+      doc.text(`Amount: ${formatCurrencyAmount(amount, normalizeCurrency(currency))}`);
+    }
+    if (creditTransactionId) {
+      doc.text(`Credit Transaction ID: ${creditTransactionId}`);
+    }
+    if (redemptionId) {
+      doc.text(`Redemption Request ID: ${redemptionId}`);
+    }
+    doc.moveDown();
+    doc.fontSize(14).text("Timeline Log");
+    doc.moveDown(0.5);
+    (timelineLog || []).forEach((entry, index) => {
+      doc.fontSize(12).text(`${index + 1}. ${entry.step || "STEP"}`);
+      doc.fontSize(10);
+      if (entry.actorName || entry.actorEmail) {
+        doc.text(`Actor: ${entry.actorName || ""} ${entry.actorEmail ? `(${entry.actorEmail})` : ""}`);
+      }
+      if (entry.role) {
+        doc.text(`Role: ${entry.role}`);
+      }
+      if (entry.signatureId) {
+        doc.text(`Signature ID: ${entry.signatureId}`);
+      }
+      if (entry.message) {
+        doc.text(`Message: ${entry.message}`);
+      }
+      if (entry.at) {
+        const at = new Date(entry.at).toLocaleString();
+        doc.text(`At: ${at}`);
+      }
+      if (entry.metadata) {
+        doc.text(`Metadata: ${JSON.stringify(entry.metadata)}`);
+      }
+      doc.moveDown();
+    });
+    doc.end();
+  });
 }
 
 // rest.js
@@ -936,7 +1679,45 @@ var EMPLOYEE_TYPES = [
   "freelancer_india",
   "freelancer_usa"
 ];
+var POLICY_UPLOAD_DIR = path3.resolve(process.cwd(), "uploads", "policies");
+fs2.mkdirSync(POLICY_UPLOAD_DIR, { recursive: true });
+var POLICY_ALLOWED_MIME = /* @__PURE__ */ new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+]);
+var policyUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!POLICY_ALLOWED_MIME.has(file.mimetype)) {
+      cb(BadRequestError("Unsupported file type."));
+      return;
+    }
+    cb(null, true);
+  }
+});
+var creditRequestUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!POLICY_ALLOWED_MIME.has(file.mimetype)) {
+      cb(BadRequestError("Unsupported file type."));
+      return;
+    }
+    cb(null, true);
+  }
+});
 var normalizeEmployeeType = (type) => type === "permanent" ? "permanent_india" : type;
+var getUserCurrency = (user) => normalizeCurrency(user?.currency, getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType)));
+var formatMoney2 = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
 var asyncHandler = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
@@ -968,6 +1749,18 @@ var requireRole = (req, roles, message) => {
   }
   return user;
 };
+async function hydrateHods(users) {
+  if (!users || users.length === 0) {
+    return [];
+  }
+  const hodIds = Array.from(new Set(users.map((u) => u.hodId).filter(Boolean)));
+  const hods = hodIds.length > 0 ? await getUsersByIds(hodIds) : [];
+  const hodMap = new Map(hods.map((hod) => [hod._id.toString(), hod]));
+  return users.map((user) => ({
+    ...user,
+    hod: user.hodId ? hodMap.get(user.hodId) || null : null
+  }));
+}
 async function hydrateFreelancerInitiators(users) {
   if (!users || users.length === 0) {
     return [];
@@ -1052,7 +1845,11 @@ async function hydrateCreditRequests(requests) {
     user: userMap.get(request.userId) || null,
     initiator: userMap.get(request.initiatorId) || null,
     hod: request.hodId ? userMap.get(request.hodId) || null : null,
-    policy: request.policyId ? policyMap.get(request.policyId) || null : null
+    policy: request.policyId ? policyMap.get(request.policyId) || null : null,
+    currency: normalizeCurrency(
+      request.currency,
+      getUserCurrency(userMap.get(request.userId) || null)
+    )
   }));
 }
 async function hydrateRedemptionRequests(requests) {
@@ -1064,9 +1861,25 @@ async function hydrateRedemptionRequests(requests) {
   const userMap = new Map(users.map((user) => [user._id.toString(), user]));
   return requests.map((request) => ({
     ...request,
-    user: userMap.get(request.userId) || null
+    user: userMap.get(request.userId) || null,
+    currency: normalizeCurrency(
+      request.currency,
+      getUserCurrency(userMap.get(request.userId) || null)
+    )
   }));
 }
+var buildTimelineEntry = ({ step, role, actor, signatureId, message, metadata }) => ({
+  step,
+  role,
+  actorId: actor?.id || actor?._id?.toString(),
+  actorName: actor?.name || "",
+  actorEmail: actor?.email || "",
+  signatureId,
+  message,
+  metadata,
+  at: /* @__PURE__ */ new Date()
+});
+var appendTimelineEntry = (existing, entry) => [...existing || [], entry];
 function createRestRouter() {
   const router = express.Router();
   router.use(
@@ -1153,6 +1966,7 @@ function createRestRouter() {
       res.cookie(COOKIE_NAME, token, cookieOptions);
       res.json({
         success: true,
+        token,
         user: { id: user._id.toString(), email: user.email, name: user.name, role: user.role }
       });
     })
@@ -1196,6 +2010,7 @@ function createRestRouter() {
       res.cookie(COOKIE_NAME, token, cookieOptions);
       res.json({
         success: true,
+        token,
         user: { id: user._id.toString(), email: user.email, name: user.name, role: user.role }
       });
     })
@@ -1212,15 +2027,8 @@ function createRestRouter() {
     "/users",
     asyncHandler(async (req, res) => {
       const user = requireRole(req, ["admin", "hod"], "HOD access required");
-      if (user.role === "admin") {
-        const users2 = await getAllUsers();
-        res.json(await hydrateFreelancerInitiators(users2));
-        return;
-      }
-      const users = await getUsersByHod(user.id);
-      const self = await getUserById(user.id);
-      const combined = self ? [self, ...users.filter((u) => u._id.toString() !== self._id.toString())] : users;
-      res.json(await hydrateFreelancerInitiators(combined));
+      const users = await getAllUsers();
+      res.json(await hydrateFreelancerInitiators(users));
     })
   );
   router.get(
@@ -1287,11 +2095,6 @@ function createRestRouter() {
           throw BadRequestError("Assigned HOD must be an Admin or HOD.");
         }
       }
-      if (normalizedEmployeeType.startsWith("freelancer")) {
-        if (!input.freelancerInitiatorIds || input.freelancerInitiatorIds.length === 0) {
-          throw BadRequestError("Freelancers must have at least one initiator assigned.");
-        }
-      }
       const openId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const user = await createUser({
         ...userInput,
@@ -1302,8 +2105,8 @@ function createRestRouter() {
       if (input.role === "admin") {
         await updateUser(user._id.toString(), { hodId: user._id.toString() });
       }
-      if (normalizedEmployeeType.startsWith("freelancer")) {
-        await setEmployeeInitiators(user._id.toString(), freelancerInitiatorIds || [], ctxUser.id);
+      if (normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
+        await setEmployeeInitiators(user._id.toString(), freelancerInitiatorIds, ctxUser.id);
       }
       await createAuditLog({
         userId: ctxUser.id,
@@ -1324,58 +2127,70 @@ function createRestRouter() {
           id: z.string(),
           name: z.string().optional(),
           email: z.string().email().optional(),
+          password: z.string().min(6).optional(),
           phone: z.string().optional(),
           employeeType: z.enum(EMPLOYEE_TYPES).optional(),
           role: z.enum(ROLE_OPTIONS).optional(),
           hodId: z.string().optional(),
           freelancerInitiatorIds: z.array(z.string()).optional(),
+          isEmployee: z.boolean().optional(),
           status: z.enum(["active", "inactive"]).optional()
         }),
         { ...req.body, id: req.params.id }
       );
       const { id, freelancerInitiatorIds, ...updates } = input;
       const currentUser = await getUserById(id);
+      if (!currentUser) {
+        throw NotFoundError("User not found");
+      }
+      if (ctxUser.role === "hod") {
+        const isSelf = currentUser._id?.toString() === ctxUser.id;
+        const isOwned = currentUser.hodId?.toString() === ctxUser.id;
+        if (!isSelf && !isOwned) {
+          throw ForbiddenError("HOD can only update users created by them.");
+        }
+      }
       const normalizedEmployeeType = updates.employeeType ? normalizeEmployeeType(updates.employeeType) : currentUser?.employeeType;
       const targetRole = updates.role ?? currentUser?.role;
       const targetEmployeeType = normalizedEmployeeType ?? currentUser?.employeeType;
+      const hodIdToUse = updates.hodId ?? currentUser?.hodId;
       if (targetRole === "admin") {
         updates.hodId = id;
       }
       if (targetRole === "hod") {
-        if (!updates.hodId) {
+        if (!hodIdToUse) {
           throw BadRequestError("HOD must have an Admin assigned as HOD.");
         }
-        const hodUser = await getUserById(updates.hodId);
+        const hodUser = await getUserById(hodIdToUse);
         if (!hodUser || hodUser.role !== "admin") {
           throw BadRequestError("HOD must be assigned to an Admin user.");
         }
+        if (updates.hodId === void 0) {
+          updates.hodId = hodIdToUse;
+        }
       }
       if (targetRole === "employee" || targetRole === "account") {
-        if (!updates.hodId) {
+        if (!hodIdToUse) {
           throw BadRequestError("HOD is required for this role.");
         }
-        const hodUser = await getUserById(updates.hodId);
+        const hodUser = await getUserById(hodIdToUse);
         if (!hodUser || hodUser.role !== "admin" && hodUser.role !== "hod") {
           throw BadRequestError("Assigned HOD must be an Admin or HOD.");
         }
+        if (updates.hodId === void 0) {
+          updates.hodId = hodIdToUse;
+        }
       }
       if (targetEmployeeType && targetEmployeeType.startsWith("freelancer")) {
-        if (freelancerInitiatorIds) {
-          if (freelancerInitiatorIds.length === 0) {
-            throw BadRequestError("Freelancers must have at least one initiator assigned.");
-          }
-        } else {
-          const existingInitiators = await getEmployeeInitiatorsByEmployeeId(id);
-          if (!existingInitiators || existingInitiators.length === 0) {
-            throw BadRequestError("Freelancers must have at least one initiator assigned.");
-          }
+        if (freelancerInitiatorIds && freelancerInitiatorIds.length === 0) {
+          await setEmployeeInitiators(id, [], ctxUser.id);
         }
       }
       if (updates.employeeType) {
         updates.employeeType = normalizedEmployeeType;
       }
       await updateUser(id, updates);
-      if (normalizedEmployeeType && normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds) {
+      if (normalizedEmployeeType && normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
         await setEmployeeInitiators(id, freelancerInitiatorIds, ctxUser.id);
       }
       await createAuditLog({
@@ -1408,11 +2223,7 @@ function createRestRouter() {
     "/policies",
     asyncHandler(async (req, res) => {
       const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
-      if (ctxUser.role === "admin") {
-        res.json(await getAllPolicies());
-        return;
-      }
-      res.json(await getPoliciesByCreator(ctxUser.id));
+      res.json(await getAllPolicies());
     })
   );
   router.get(
@@ -1421,6 +2232,17 @@ function createRestRouter() {
       requireAuth(req);
       const input = parseInput(z.object({ id: z.string() }), { id: req.params.id });
       res.json(await getPolicyById(input.id));
+    })
+  );
+  router.get(
+    "/files/:id",
+    asyncHandler(async (req, res) => {
+      requireAuth(req);
+      const input = parseInput(z.object({ id: z.string() }), { id: req.params.id });
+      const streamed = await streamGridFSFile(input.id, res);
+      if (!streamed) {
+        throw NotFoundError("File not found");
+      }
     })
   );
   router.post(
@@ -1437,7 +2259,7 @@ function createRestRouter() {
         }),
         req.body
       );
-      await createPolicy({
+      const policy = await createPolicy({
         ...input,
         createdBy: ctxUser.id
       });
@@ -1447,7 +2269,7 @@ function createRestRouter() {
         entityType: "policy",
         details: JSON.stringify({ name: input.name })
       });
-      res.json({ success: true });
+      res.json({ success: true, policy });
     })
   );
   router.patch(
@@ -1466,6 +2288,13 @@ function createRestRouter() {
         { ...req.body, id: req.params.id }
       );
       const { id, ...updates } = input;
+      const existing = await getPolicyById(id);
+      if (!existing) {
+        throw NotFoundError("Policy not found");
+      }
+      if (ctxUser.role === "hod" && existing.createdBy !== ctxUser.id) {
+        throw ForbiddenError("You can only update policies you created.");
+      }
       await updatePolicy(id, updates);
       await createAuditLog({
         userId: ctxUser.id,
@@ -1477,11 +2306,109 @@ function createRestRouter() {
       res.json({ success: true });
     })
   );
+  router.post(
+    "/policies/:id/attachments",
+    policyUpload.array("files", 10),
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
+      const input = parseInput(z.object({ id: z.string() }), { id: req.params.id });
+      const policy = await getPolicyById(input.id);
+      if (!policy) {
+        throw NotFoundError("Policy not found");
+      }
+      if (ctxUser.role === "hod" && policy.createdBy !== ctxUser.id) {
+        throw ForbiddenError("You can only update policies you created.");
+      }
+      const files = req.files || [];
+      if (!files.length) {
+        throw BadRequestError("No files uploaded.");
+      }
+      const stored = await Promise.all(
+        files.map(
+          (file) => saveBufferToGridFS({
+            buffer: file.buffer,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+            metadata: { source: "policy", policyId: input.id }
+          })
+        )
+      );
+      const attachments = files.map((file, index) => ({
+        originalName: file.originalname,
+        filename: stored[index]?.filename || file.originalname,
+        fileId: stored[index]?.fileId,
+        mimeType: file.mimetype,
+        size: file.size,
+        url: stored[index]?.fileId ? `/api/files/${stored[index].fileId}` : "",
+        uploadedAt: /* @__PURE__ */ new Date()
+      }));
+      const updated = await addPolicyAttachments(input.id, attachments);
+      await createAuditLog({
+        userId: ctxUser.id,
+        action: "policy_attachment_added",
+        entityType: "policy",
+        entityId: input.id,
+        details: JSON.stringify({ count: attachments.length })
+      });
+      res.json({ success: true, attachments: updated?.attachments || [] });
+    })
+  );
+  router.delete(
+    "/policies/:id/attachments/:attachmentId",
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
+      const input = parseInput(
+        z.object({ id: z.string(), attachmentId: z.string() }),
+        { id: req.params.id, attachmentId: req.params.attachmentId }
+      );
+      const policy = await getPolicyById(input.id);
+      if (!policy) {
+        throw NotFoundError("Policy not found");
+      }
+      if (ctxUser.role === "hod" && policy.createdBy !== ctxUser.id) {
+        throw ForbiddenError("You can only update policies you created.");
+      }
+      const attachment = policy.attachments?.find(
+        (item) => item._id?.toString() === input.attachmentId
+      );
+      if (!attachment) {
+        throw NotFoundError("Attachment not found");
+      }
+      await removePolicyAttachment(input.id, input.attachmentId);
+      if (attachment.fileId) {
+        try {
+          await deleteGridFSFile(attachment.fileId);
+        } catch (error) {
+          console.warn("[Files] Failed to delete GridFS file:", error?.message || error);
+        }
+      }
+      if (attachment.filename) {
+        const filePath = path3.join(POLICY_UPLOAD_DIR, attachment.filename);
+        fs2.unlink(filePath, () => {
+        });
+      }
+      await createAuditLog({
+        userId: ctxUser.id,
+        action: "policy_attachment_removed",
+        entityType: "policy",
+        entityId: input.id,
+        details: JSON.stringify({ attachmentId: input.attachmentId })
+      });
+      res.json({ success: true });
+    })
+  );
   router.delete(
     "/policies/:id",
     asyncHandler(async (req, res) => {
       const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
       const input = parseInput(z.object({ id: z.string() }), { id: req.params.id });
+      const existing = await getPolicyById(input.id);
+      if (!existing) {
+        throw NotFoundError("Policy not found");
+      }
+      if (ctxUser.role === "hod" && existing.createdBy !== ctxUser.id) {
+        throw ForbiddenError("You can only delete policies you created.");
+      }
       await deletePolicy(input.id);
       await createAuditLog({
         userId: ctxUser.id,
@@ -1541,6 +2468,22 @@ function createRestRouter() {
         assignmentId = assignment._id.toString();
       }
       await setPolicyInitiators(assignmentId, input.initiatorIds, ctxUser.id);
+      try {
+        const initiators = await getUsersByIds(input.initiatorIds);
+        await Promise.all(
+          initiators.map(
+            (init) => createNotification({
+              userId: init._id.toString(),
+              title: "Policy initiator assigned",
+              message: `You can initiate ${policy.name} for ${user.name || user.email}.`,
+              type: "info",
+              actionUrl: "/employees"
+            })
+          )
+        );
+      } catch (error) {
+        console.warn("[Notifications] Failed to notify policy initiators:", error?.message || error);
+      }
       await createAuditLog({
         userId: ctxUser.id,
         action: "policy_assigned",
@@ -1579,15 +2522,40 @@ function createRestRouter() {
   router.get(
     "/team/my",
     asyncHandler(async (req, res) => {
-      const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
+      const ctxUser = requireAuth(req);
       if (ctxUser.role === "admin") {
         const users2 = await getAllUsers();
-        const withInitiators2 = await hydrateFreelancerInitiators(users2);
+        const withHods2 = await hydrateHods(users2);
+        const withInitiators2 = await hydrateFreelancerInitiators(withHods2);
         res.json(await hydratePolicyAssignments(withInitiators2));
         return;
       }
-      const users = await getUsersByHod(ctxUser.id);
-      const withInitiators = await hydrateFreelancerInitiators(users);
+      if (ctxUser.role === "hod") {
+        const users2 = await getUsersByHod(ctxUser.id);
+        const withHods2 = await hydrateHods(users2);
+        const withInitiators2 = await hydrateFreelancerInitiators(withHods2);
+        res.json(await hydratePolicyAssignments(withInitiators2));
+        return;
+      }
+      const [initiatorLinks, policyLinks] = await Promise.all([
+        getEmployeeInitiatorsByInitiatorId(ctxUser.id),
+        getPolicyInitiatorsByInitiatorId(ctxUser.id)
+      ]);
+      const employeeIds = new Set(initiatorLinks.map((link) => link.employeeId));
+      if (policyLinks.length > 0) {
+        const assignmentIds = Array.from(new Set(policyLinks.map((link) => link.assignmentId)));
+        const assignments = await getEmployeePolicyAssignmentsByIds(assignmentIds);
+        assignments.forEach((assignment) => {
+          if (assignment?.userId) {
+            employeeIds.add(assignment.userId);
+          }
+        });
+      }
+      const uniqueEmployeeIds = Array.from(employeeIds);
+      const users = uniqueEmployeeIds.length > 0 ? await getUsersByIds(uniqueEmployeeIds) : [];
+      const filtered = users.filter((member) => member.role === "employee" && member.isEmployee !== false);
+      const withHods = await hydrateHods(filtered);
+      const withInitiators = await hydrateFreelancerInitiators(withHods);
       res.json(await hydratePolicyAssignments(withInitiators));
     })
   );
@@ -1667,15 +2635,19 @@ function createRestRouter() {
   router.get(
     "/credit-requests/pending-approvals",
     asyncHandler(async (req, res) => {
-      const ctxUser = requireRole(req, ["admin", "hod"], "HOD access required");
+      const ctxUser = requireAuth(req);
       if (ctxUser.role === "admin") {
-        const requests = await getCreditRequestsByStatus("pending_approval");
-        res.json(await hydrateCreditRequests(requests));
+        const requests2 = await getAllCreditRequests();
+        res.json(await hydrateCreditRequests(requests2));
         return;
       }
-      const allRequests = await getCreditRequestsByHod(ctxUser.id);
-      const pending = allRequests.filter((r) => r.status === "pending_approval");
-      res.json(await hydrateCreditRequests(pending));
+      if (ctxUser.role === "hod") {
+        const requests2 = await getCreditRequestsByHod(ctxUser.id);
+        res.json(await hydrateCreditRequests(requests2));
+        return;
+      }
+      const requests = await getCreditRequestsByUserId(ctxUser.id);
+      res.json(await hydrateCreditRequests(requests));
     })
   );
   router.get(
@@ -1705,6 +2677,36 @@ function createRestRouter() {
     })
   );
   router.post(
+    "/credit-requests/attachments",
+    creditRequestUpload.array("files", 6),
+    asyncHandler(async (req, res) => {
+      requireAuth(req);
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (files.length === 0) {
+        throw BadRequestError("No files uploaded.");
+      }
+      const stored = await Promise.all(
+        files.map(
+          (file) => saveBufferToGridFS({
+            buffer: file.buffer,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+            metadata: { source: "credit_request" }
+          })
+        )
+      );
+      const attachments = files.map((file, index) => ({
+        originalName: file.originalname,
+        filename: stored[index]?.filename || file.originalname,
+        fileId: stored[index]?.fileId,
+        mimeType: file.mimetype,
+        size: file.size,
+        url: stored[index]?.fileId ? `/api/files/${stored[index].fileId}` : ""
+      }));
+      res.json({ success: true, attachments });
+    })
+  );
+  router.post(
     "/credit-requests",
     asyncHandler(async (req, res) => {
       const ctxUser = requireAuth(req);
@@ -1717,9 +2719,27 @@ function createRestRouter() {
           bonus: z.number().default(0),
           deductions: z.number().default(0),
           amount: z.number(),
+          amountItems: z.array(
+            z.object({
+              amount: z.number(),
+              note: z.string().optional(),
+              addedBy: z.string().optional(),
+              addedAt: z.string().optional()
+            })
+          ).optional(),
           calculationBreakdown: z.string().optional(),
           notes: z.string().optional(),
-          documents: z.string().optional()
+          documents: z.string().optional(),
+          attachments: z.array(
+            z.object({
+              originalName: z.string(),
+              filename: z.string(),
+              fileId: z.string().optional(),
+              mimeType: z.string(),
+              size: z.number(),
+              url: z.string()
+            })
+          ).optional()
         }),
         req.body
       );
@@ -1730,20 +2750,20 @@ function createRestRouter() {
       if (!user.hodId) {
         throw BadRequestError("User has no HOD assigned.");
       }
+      const requestCurrency = getUserCurrency(user);
       const isAdminOrHod = ctxUser.role === "admin" || ctxUser.role === "hod";
+      let policyForEmail = null;
       if (input.type === "policy") {
         if (!input.policyId) {
           throw BadRequestError("Policy is required for policy-based requests.");
         }
+        policyForEmail = await getPolicyById(input.policyId);
         const assignment = await getEmployeePolicyAssignmentByUserPolicy(
           input.userId,
           input.policyId
         );
         if (!assignment) {
           throw BadRequestError("Policy is not assigned to this employee.");
-        }
-        if (new Date(assignment.effectiveDate) > /* @__PURE__ */ new Date()) {
-          throw BadRequestError("Policy assignment is not yet effective.");
         }
         if (!isAdminOrHod) {
           const initiators = await getPolicyInitiatorsByAssignmentIds([
@@ -1767,7 +2787,23 @@ function createRestRouter() {
           }
         }
       }
-      const status = input.type === "policy" ? "pending_signature" : "pending_approval";
+      const status = input.type === "policy" ? isAdminOrHod ? "pending_signature" : "pending_approval" : "pending_approval";
+      const timelineLog = [
+        buildTimelineEntry({
+          step: "REQUEST_INITIATED",
+          role: isAdminOrHod ? "admin" : "initiator",
+          actor: ctxUser,
+          message: "Credit request initiated",
+          metadata: {
+            type: input.type,
+            amount: input.amount,
+            currency: requestCurrency,
+            employeeName: user?.name,
+            employeeEmail: user?.email,
+            policyName: policyForEmail?.name
+          }
+        })
+      ];
       await createCreditRequest({
         userId: input.userId,
         initiatorId: ctxUser.id,
@@ -1778,10 +2814,19 @@ function createRestRouter() {
         bonus: input.bonus,
         deductions: input.deductions,
         amount: input.amount,
+        currency: requestCurrency,
+        amountItems: (input.amountItems || []).map((item) => ({
+          amount: item.amount,
+          note: item.note,
+          addedBy: item.addedBy || ctxUser.id,
+          addedAt: item.addedAt ? new Date(item.addedAt) : /* @__PURE__ */ new Date()
+        })),
         calculationBreakdown: input.calculationBreakdown,
         notes: input.notes,
         documents: input.documents,
-        status
+        attachments: input.attachments || [],
+        status,
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
@@ -1792,7 +2837,7 @@ function createRestRouter() {
       await createNotification({
         userId: input.userId,
         title: "Credit request created",
-        message: input.type === "policy" ? "A policy-based credit request is awaiting your signature." : "A freelancer credit request has been submitted and is pending HOD approval.",
+        message: input.type === "policy" ? isAdminOrHod ? "A policy-based credit request is awaiting your signature." : "A policy credit request has been submitted and is pending HOD approval." : "A freelancer credit request has been submitted and is pending HOD approval.",
         type: "info",
         actionUrl: "/transactions"
       });
@@ -1800,10 +2845,82 @@ function createRestRouter() {
         await createNotification({
           userId: user.hodId,
           title: "Credit request pending approval",
-          message: `${user.name || user.email} has a credit request awaiting your approval.`,
+          message: `${user.name || user.email} has a ${formatMoney2(input.amount, requestCurrency)} credit request awaiting your approval.`,
           type: "action",
           actionUrl: "/approvals"
         });
+      }
+      if (input.type === "freelancer" && user.hodId) {
+        try {
+          const hodUser = await getUserById(user.hodId);
+          await sendHodFreelancerRequestEmail({
+            to: hodUser?.email,
+            hodName: hodUser?.name,
+            employee: user,
+            initiator: ctxUser,
+            amount: input.amount,
+            currency: requestCurrency,
+            details: input.notes,
+            attachments: input.attachments || [],
+            requestType: "freelancer"
+          });
+        } catch (error) {
+          console.warn("[Email] Failed to send HOD freelancer email:", error?.message || error);
+        }
+      }
+      if (input.type === "policy" && user.hodId) {
+        try {
+          const hodUser = await getUserById(user.hodId);
+          const policyDetails = policyForEmail?.name ? `Policy: ${policyForEmail.name}${input.notes ? ` | ${input.notes}` : ""}` : input.notes;
+          await sendHodFreelancerRequestEmail({
+            to: hodUser?.email,
+            hodName: hodUser?.name,
+            employee: user,
+            initiator: ctxUser,
+            amount: input.amount,
+            currency: requestCurrency,
+            details: policyDetails,
+            attachments: input.attachments || [],
+            requestType: "policy"
+          });
+        } catch (error) {
+          console.warn("[Email] Failed to send HOD policy email:", error?.message || error);
+        }
+        try {
+          const admins = await getUsersByRole("admin");
+          await Promise.all(
+            admins.map(
+              (admin) => createNotification({
+                userId: admin._id.toString(),
+                title: "Policy request pending approval",
+                message: `${user.name || user.email} has a ${formatMoney2(input.amount, requestCurrency)} policy request${policyForEmail?.name ? ` (${policyForEmail.name})` : ""} awaiting approval.`,
+                type: "action",
+                actionUrl: "/approvals"
+              })
+            )
+          );
+          await Promise.all(
+            admins.map(
+              (admin) => sendHodFreelancerRequestEmail({
+                to: admin.email,
+                hodName: admin.name,
+                employee: user,
+                initiator: ctxUser,
+                amount: input.amount,
+                currency: requestCurrency,
+                details: policyForEmail?.name ? `Policy: ${policyForEmail.name}${input.notes ? ` | ${input.notes}` : ""}` : input.notes,
+                attachments: input.attachments || [],
+                requestType: "policy"
+              })
+            )
+          );
+        } catch (error) {
+          console.warn("[Email] Failed to notify admins for policy request:", error?.message || error);
+        }
+      }
+      if (input.type === "policy" && !isAdminOrHod) {
+        res.json({ success: true, message: "Policy request created and sent to HOD for approval." });
+        return;
       }
       if (input.type === "policy") {
         try {
@@ -1811,6 +2928,7 @@ function createRestRouter() {
             user.email || "",
             user.name || "",
             input.amount,
+            requestCurrency,
             `Policy: ${input.policyId} | Notes: ${input.notes || "N/A"} | Breakdown: ${input.calculationBreakdown || "N/A"}`
           );
           res.json({
@@ -1847,10 +2965,21 @@ function createRestRouter() {
       if (request.status !== "pending_signature") {
         throw BadRequestError("Request is not awaiting signature.");
       }
+      const timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "EMPLOYEE_SIGNATURE",
+          role: "employee",
+          actor: ctxUser,
+          signatureId: input.signature,
+          message: "Employee signed policy request"
+        })
+      );
       await updateCreditRequest(input.requestId, {
         userSignature: input.signature,
         userSignedAt: /* @__PURE__ */ new Date(),
-        status: "pending_approval"
+        status: "pending_approval",
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
@@ -1888,9 +3017,20 @@ function createRestRouter() {
       if (request.type !== "policy") {
         throw BadRequestError("Only policy-based requests can be rejected by the employee.");
       }
+      const timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "EMPLOYEE_REJECTED",
+          role: "employee",
+          actor: ctxUser,
+          message: "Employee rejected policy request",
+          metadata: { reason: input.reason }
+        })
+      );
       await updateCreditRequest(input.requestId, {
         userRejectionReason: input.reason,
-        status: "rejected_by_user"
+        status: "rejected_by_user",
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
@@ -1914,20 +3054,78 @@ function createRestRouter() {
       if (request.status !== "pending_approval") {
         throw BadRequestError("Only pending approvals can be approved.");
       }
+      const requestCurrency = normalizeCurrency(request.currency);
+      if (request.type === "freelancer") {
+        const timelineLog2 = appendTimelineEntry(
+          request.timelineLog,
+          buildTimelineEntry({
+            step: "HOD_APPROVED",
+            role: ctxUser.role,
+            actor: ctxUser,
+            signatureId: ctxUser.id,
+            message: "HOD approved freelancer request"
+          })
+        );
+        await updateCreditRequest(input.requestId, {
+          status: "pending_employee_approval",
+          hodApprovedBy: ctxUser.id,
+          hodApprovedAt: /* @__PURE__ */ new Date(),
+          timelineLog: timelineLog2
+        });
+        await createAuditLog({
+          userId: ctxUser.id,
+          action: "credit_request_hod_approved",
+          entityType: "credit_request",
+          entityId: input.requestId
+        });
+        await createNotification({
+          userId: request.userId,
+          title: "Approval required",
+          message: `Your freelancer incentive for ${formatMoney2(request.amount, requestCurrency)} is awaiting your approval.`,
+          type: "action",
+          actionUrl: "/approvals"
+        });
+        res.json({ success: true, status: "pending_employee_approval" });
+        return;
+      }
+      const currentBalance = await getWalletBalance(request.userId.toString());
+      const newBalance = currentBalance + request.amount;
+      let timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "HOD_APPROVED",
+          role: ctxUser.role,
+          actor: ctxUser,
+          signatureId: ctxUser.id,
+          message: "HOD approved policy request"
+        })
+      );
+      timelineLog = appendTimelineEntry(
+        timelineLog,
+        buildTimelineEntry({
+          step: "WALLET_CREDITED",
+          role: "system",
+          actor: ctxUser,
+          message: "Wallet credited after policy approval",
+          metadata: { amount: request.amount }
+        })
+      );
       await updateCreditRequest(input.requestId, {
         status: "approved",
         hodApprovedBy: ctxUser.id,
-        hodApprovedAt: /* @__PURE__ */ new Date()
+        hodApprovedAt: /* @__PURE__ */ new Date(),
+        timelineLog
       });
-      const currentBalance = await getWalletBalance(request.userId.toString());
-      const newBalance = currentBalance + request.amount;
       await createWalletTransaction({
         userId: request.userId,
         type: "credit",
         amount: request.amount,
+        currency: requestCurrency,
         creditRequestId: request._id?.toString(),
         description: request.type === "freelancer" ? "Freelancer Amount" : "Policy Credit",
-        balance: newBalance
+        balance: newBalance,
+        redeemed: false,
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
@@ -1938,7 +3136,7 @@ function createRestRouter() {
       await createNotification({
         userId: request.userId,
         title: "Credit request approved",
-        message: `Your credit request for $${request.amount.toFixed(2)} was approved.`,
+        message: `Your credit request for ${formatMoney2(request.amount, requestCurrency)} was approved.`,
         type: "success",
         actionUrl: "/transactions"
       });
@@ -1956,9 +3154,29 @@ function createRestRouter() {
         }),
         req.body
       );
+      const request = await getCreditRequestById(input.requestId);
+      if (!request) {
+        throw NotFoundError("Not found");
+      }
+      if (request.status !== "pending_approval") {
+        throw BadRequestError("Only pending approvals can be rejected.");
+      }
+      const timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "HOD_REJECTED",
+          role: ctxUser.role,
+          actor: ctxUser,
+          signatureId: ctxUser.id,
+          message: "HOD rejected request",
+          metadata: { reason: input.reason }
+        })
+      );
       await updateCreditRequest(input.requestId, {
         hodRejectionReason: input.reason,
-        status: "rejected_by_hod"
+        hodRejectedAt: /* @__PURE__ */ new Date(),
+        status: "rejected_by_hod",
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
@@ -1967,15 +3185,168 @@ function createRestRouter() {
         entityId: input.requestId,
         details: input.reason
       });
-      const request = await getCreditRequestById(input.requestId);
-      if (request) {
+      const employee = await getUserById(request.userId);
+      await createNotification({
+        userId: request.userId,
+        title: "Credit request rejected",
+        message: `Your credit request was rejected. Reason: ${input.reason}`,
+        type: "warning",
+        actionUrl: "/transactions"
+      });
+      if (request.initiatorId) {
+        const initiator = await getUserById(request.initiatorId);
         await createNotification({
-          userId: request.userId,
-          title: "Credit request rejected",
-          message: `Your credit request was rejected. Reason: ${input.reason}`,
+          userId: request.initiatorId,
+          title: "Request rejected",
+          message: `The ${request.type} request for ${employee?.name || employee?.email} was rejected by HOD. Reason: ${input.reason}`,
           type: "warning",
-          actionUrl: "/transactions"
+          actionUrl: "/approvals"
         });
+        try {
+          const hodUser = await getUserById(request.hodId);
+          await sendInitiatorFreelancerRejectionEmail({
+            to: initiator?.email,
+            initiatorName: initiator?.name,
+            employee,
+            hod: hodUser,
+            amount: request.amount,
+            currency: request.currency,
+            reason: input.reason,
+            rejectedBy: hodUser?.name || hodUser?.email || "HOD",
+            requestType: request.type
+          });
+        } catch (error) {
+          console.warn("[Email] Failed to send initiator rejection email:", error?.message || error);
+        }
+      }
+      res.json({ success: true });
+    })
+  );
+  router.post(
+    "/credit-requests/approve-by-employee",
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireAuth(req);
+      const input = parseInput(z.object({ requestId: z.string() }), req.body);
+      const request = await getCreditRequestById(input.requestId);
+      if (!request || request.userId !== ctxUser.id) {
+        throw ForbiddenError("Forbidden");
+      }
+      if (request.status !== "pending_employee_approval") {
+        throw BadRequestError("Only pending employee approvals can be approved.");
+      }
+      const requestCurrency = normalizeCurrency(request.currency, getCurrencyByEmployeeType(ctxUser.employeeType));
+      const currentBalance = await getWalletBalance(request.userId.toString());
+      const newBalance = currentBalance + request.amount;
+      let timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "EMPLOYEE_APPROVED",
+          role: "employee",
+          actor: ctxUser,
+          message: "Employee approved freelancer request"
+        })
+      );
+      timelineLog = appendTimelineEntry(
+        timelineLog,
+        buildTimelineEntry({
+          step: "WALLET_CREDITED",
+          role: "system",
+          actor: ctxUser,
+          message: "Wallet credited after freelancer approval",
+          metadata: { amount: request.amount }
+        })
+      );
+      await updateCreditRequest(input.requestId, {
+        status: "approved",
+        employeeApprovedAt: /* @__PURE__ */ new Date(),
+        timelineLog
+      });
+      await createWalletTransaction({
+        userId: request.userId,
+        type: "credit",
+        amount: request.amount,
+        currency: requestCurrency,
+        creditRequestId: request._id?.toString(),
+        description: "Freelancer Amount",
+        balance: newBalance,
+        redeemed: false,
+        timelineLog
+      });
+      await createAuditLog({
+        userId: ctxUser.id,
+        action: "credit_request_approved_by_employee",
+        entityType: "credit_request",
+        entityId: input.requestId
+      });
+      res.json({ success: true });
+    })
+  );
+  router.post(
+    "/credit-requests/reject-by-employee",
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireAuth(req);
+      const input = parseInput(
+        z.object({
+          requestId: z.string(),
+          reason: z.string()
+        }),
+        req.body
+      );
+      const request = await getCreditRequestById(input.requestId);
+      if (!request || request.userId !== ctxUser.id) {
+        throw ForbiddenError("Forbidden");
+      }
+      if (request.status !== "pending_employee_approval") {
+        throw BadRequestError("Only pending employee approvals can be rejected.");
+      }
+      const timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "EMPLOYEE_REJECTED",
+          role: "employee",
+          actor: ctxUser,
+          message: "Employee rejected freelancer request",
+          metadata: { reason: input.reason }
+        })
+      );
+      await updateCreditRequest(input.requestId, {
+        userRejectionReason: input.reason,
+        employeeRejectedAt: /* @__PURE__ */ new Date(),
+        status: "rejected_by_employee",
+        timelineLog
+      });
+      await createAuditLog({
+        userId: ctxUser.id,
+        action: "credit_request_rejected_by_employee",
+        entityType: "credit_request",
+        entityId: input.requestId,
+        details: input.reason
+      });
+      if (request.initiatorId) {
+        const initiator = await getUserById(request.initiatorId);
+        const hodUser = request.hodId ? await getUserById(request.hodId) : null;
+        await createNotification({
+          userId: request.initiatorId,
+          title: "Freelancer request rejected",
+          message: `The freelancer request was rejected by ${ctxUser.name || ctxUser.email}. Reason: ${input.reason}`,
+          type: "warning",
+          actionUrl: "/approvals"
+        });
+        try {
+          await sendInitiatorFreelancerRejectionEmail({
+            to: initiator?.email,
+            initiatorName: initiator?.name,
+            employee: ctxUser,
+            hod: hodUser,
+            amount: request.amount,
+            currency: request.currency,
+            reason: input.reason,
+            rejectedBy: ctxUser.name || ctxUser.email,
+            requestType: request.type
+          });
+        } catch (error) {
+          console.warn("[Email] Failed to send initiator rejection email:", error?.message || error);
+        }
       }
       res.json({ success: true });
     })
@@ -1984,11 +3355,12 @@ function createRestRouter() {
     "/wallet/balance",
     asyncHandler(async (req, res) => {
       const ctxUser = requireAuth(req);
-      const [balance, summary] = await Promise.all([
-        getWalletBalance(ctxUser.id),
+      const [wallet, summary] = await Promise.all([
+        getWalletByUserId(ctxUser.id),
         getWalletSummary(ctxUser.id)
       ]);
-      res.json({ balance, ...summary });
+      const currency = normalizeCurrency(wallet?.currency, getUserCurrency(ctxUser));
+      res.json({ balance: wallet?.balance || 0, currency, ...summary });
     })
   );
   router.get(
@@ -2004,51 +3376,132 @@ function createRestRouter() {
       const ctxUser = requireAuth(req);
       const input = parseInput(
         z.object({
-          amount: z.number(),
-          method: z.string(),
-          bankDetails: z.string().optional(),
+          creditTransactionId: z.string(),
           notes: z.string().optional()
         }),
         req.body
       );
-      if (!input.bankDetails || !input.bankDetails.trim()) {
-        throw BadRequestError("Bank/payment details are required.");
+      const creditTxn = await getWalletTransactionById(input.creditTransactionId);
+      if (!creditTxn || creditTxn.userId?.toString() !== ctxUser.id.toString()) {
+        throw ForbiddenError("Invalid credit selection.");
       }
-      const balance = await getWalletBalance(ctxUser.id.toString());
-      if (balance < input.amount) {
+      if (creditTxn.type !== "credit") {
+        throw BadRequestError("Selected transaction is not a credit.");
+      }
+      if (creditTxn.redeemed) {
+        throw BadRequestError("Selected credit has already been redeemed.");
+      }
+      const amount = Number(creditTxn.amount || 0);
+      const redemptionCurrency = normalizeCurrency(creditTxn.currency, getUserCurrency(ctxUser));
+      const balanceBefore = await getWalletBalance(ctxUser.id.toString());
+      if (balanceBefore < amount) {
         throw BadRequestError("Insufficient balance");
       }
-      await createRedemptionRequest({
+      const timelineLog = appendTimelineEntry(
+        creditTxn.timelineLog,
+        buildTimelineEntry({
+          step: "REDEMPTION_REQUESTED",
+          role: "employee",
+          actor: ctxUser,
+          message: "Redemption requested",
+          metadata: {
+            creditTransactionId: creditTxn._id?.toString(),
+            amount,
+            currency: redemptionCurrency
+          }
+        })
+      );
+      const redemption = await createRedemptionRequest({
         userId: ctxUser.id,
-        amount: input.amount,
-        method: input.method,
-        bankDetails: input.bankDetails,
-        notes: input.notes
+        amount,
+        currency: redemptionCurrency,
+        notes: input.notes,
+        creditTransactionId: creditTxn._id?.toString(),
+        timelineLog
       });
+      const balanceAfter = balanceBefore - amount;
+      await createWalletTransaction({
+        userId: ctxUser.id,
+        type: "debit",
+        amount,
+        currency: redemptionCurrency,
+        redemptionRequestId: redemption._id?.toString(),
+        linkedCreditTxnId: creditTxn._id?.toString(),
+        description: "Redemption",
+        balance: balanceAfter,
+        timelineLog
+      });
+      await updateWalletTransaction(creditTxn._id?.toString(), {
+        redeemed: true,
+        redemptionRequestId: redemption._id?.toString()
+      });
+      let pdfBuffer = null;
+      try {
+        pdfBuffer = await buildTimelinePdf({
+          title: "Wallet Redemption Proof",
+          employee: { name: ctxUser.name, email: ctxUser.email },
+          amount,
+          currency: redemptionCurrency,
+          timelineLog,
+          creditTransactionId: creditTxn._id?.toString(),
+          redemptionId: redemption._id?.toString()
+        });
+        const pdfFile = await saveBufferToGridFS({
+          buffer: pdfBuffer,
+          filename: `redemption-${redemption._id?.toString()}.pdf`,
+          mimeType: "application/pdf",
+          metadata: { redemptionId: redemption._id?.toString() }
+        });
+        await updateRedemptionRequest(redemption._id?.toString(), {
+          proofPdf: {
+            filename: pdfFile.filename,
+            url: `/api/files/${pdfFile.fileId}`,
+            generatedAt: /* @__PURE__ */ new Date()
+          }
+        });
+      } catch (error) {
+        console.warn("[PDF] Failed to generate redemption proof:", error?.message || error);
+      }
       await createAuditLog({
         userId: ctxUser.id,
         action: "redemption_requested",
         entityType: "redemption_request",
-        details: JSON.stringify({ amount: input.amount })
+        details: JSON.stringify({ amount, creditTransactionId: creditTxn._id?.toString() })
       });
       await createNotification({
         userId: ctxUser.id,
         title: "Redemption request submitted",
-        message: `Your redemption request for $${input.amount.toFixed(2)} was submitted.`,
+        message: `Your redemption request for ${formatMoney2(amount, redemptionCurrency)} was submitted.`,
         type: "info",
         actionUrl: "/my-account"
       });
       const accountUsers = await getUsersByRole("account");
       await Promise.all(
-        accountUsers.map(
-          (user) => createNotification({
+        accountUsers.map(async (user) => {
+          await createNotification({
             userId: user._id.toString(),
             title: "New redemption request",
-            message: `A redemption request for $${input.amount.toFixed(2)} is waiting to be processed.`,
+            message: `A redemption request for ${formatMoney2(amount, redemptionCurrency)} is waiting to be processed.`,
             type: "action",
             actionUrl: "/accounts"
-          })
-        )
+          });
+          try {
+            await sendRedemptionRequestEmail({
+              to: user.email,
+              accountName: user.name,
+              employee: { name: ctxUser.name, email: ctxUser.email },
+              amount,
+              currency: redemptionCurrency,
+              balanceBefore,
+              balanceAfter,
+              redemptionId: redemption._id?.toString(),
+              timelineLog,
+              pdfAttachment: pdfBuffer ? { content: pdfBuffer, filename: `redemption-${redemption._id?.toString()}.pdf` } : null
+            });
+          } catch (error) {
+            console.warn("[Email] Failed to send redemption email:", error?.message || error);
+          }
+        })
       );
       res.json({ success: true });
     })
@@ -2077,7 +3530,8 @@ function createRestRouter() {
         z.object({
           requestId: z.string(),
           transactionReference: z.string(),
-          paymentNotes: z.string().optional()
+          paymentNotes: z.string().optional(),
+          paymentCurrency: z.enum(CURRENCY_VALUES).optional()
         }),
         req.body
       );
@@ -2085,37 +3539,68 @@ function createRestRouter() {
       if (!request) {
         throw NotFoundError("Not found");
       }
+      const employee = await getUserById(request.userId?.toString?.() || request.userId);
+      const expectedCurrency = normalizeCurrency(request.currency, getUserCurrency(employee));
+      const processedCurrency = normalizeCurrency(input.paymentCurrency, expectedCurrency);
+      if (processedCurrency !== expectedCurrency) {
+        throw BadRequestError(
+          `Payment currency mismatch. This request must be processed in ${expectedCurrency}.`
+        );
+      }
+      const timelineLog = appendTimelineEntry(
+        request.timelineLog,
+        buildTimelineEntry({
+          step: "REDEMPTION_PROCESSED",
+          role: ctxUser.role,
+          actor: ctxUser,
+          signatureId: ctxUser.id,
+          message: "Redemption processed",
+          metadata: {
+            transactionReference: input.transactionReference,
+            currency: processedCurrency
+          }
+        })
+      );
       await updateRedemptionRequest(input.requestId, {
         status: "completed",
         processedBy: ctxUser.id,
         processedAt: /* @__PURE__ */ new Date(),
+        currency: processedCurrency,
         transactionReference: input.transactionReference,
-        paymentNotes: input.paymentNotes
-      });
-      const currentBalance = await getWalletBalance(request.userId.toString());
-      const newBalance = currentBalance - request.amount;
-      await createWalletTransaction({
-        userId: request.userId,
-        type: "debit",
-        amount: request.amount,
-        redemptionRequestId: request._id?.toString(),
-        description: `Redemption via ${request.method}`,
-        balance: newBalance
+        paymentNotes: input.paymentNotes,
+        timelineLog
       });
       await createAuditLog({
         userId: ctxUser.id,
         action: "redemption_processed",
         entityType: "redemption_request",
         entityId: input.requestId,
-        details: JSON.stringify({ transactionReference: input.transactionReference })
+        details: JSON.stringify({
+          transactionReference: input.transactionReference,
+          paymentCurrency: processedCurrency
+        })
       });
       await createNotification({
         userId: request.userId,
         title: "Redemption processed",
-        message: `Your redemption request for $${request.amount.toFixed(2)} has been processed.`,
+        message: `Your redemption request for ${formatMoney2(request.amount, processedCurrency)} has been processed. Reference: ${input.transactionReference}`,
         type: "success",
         actionUrl: "/my-account"
       });
+      try {
+        await sendRedemptionProcessedEmail({
+          to: employee?.email,
+          employeeName: employee?.name,
+          amount: request.amount,
+          currency: processedCurrency,
+          transactionReference: input.transactionReference,
+          processedBy: ctxUser?.name || ctxUser?.email,
+          paymentNotes: input.paymentNotes,
+          redemptionId: request._id?.toString()
+        });
+      } catch (error) {
+        console.warn("[Email] Failed to send redemption processed email:", error?.message || error);
+      }
       res.json({ success: true });
     })
   );
@@ -2250,6 +3735,9 @@ function createRestRouter() {
         ctxUser.role === "admin" ? getAllWalletTransactions() : getWalletTransactionsByUserIds(userIds),
         ctxUser.role === "admin" ? getAllRedemptionRequests() : getRedemptionRequestsByUserIds(userIds)
       ]);
+      const userCurrencyMap = new Map(
+        users.map((user) => [user._id.toString(), getUserCurrency(user)])
+      );
       const monthLabels = [];
       const now = /* @__PURE__ */ new Date();
       for (let i = monthsBack - 1; i >= 0; i -= 1) {
@@ -2259,8 +3747,10 @@ function createRestRouter() {
           label: date.toLocaleString("default", { month: "short", year: "numeric" })
         });
       }
-      const buildMonthlySeries = (items, valueSelector) => {
-        const totals = new Map(monthLabels.map((label) => [label.key, 0]));
+      const buildMonthlySeries = (items, valueSelector, currencySelector) => {
+        const totals = new Map(
+          monthLabels.map((label) => [label.key, { USD: 0, INR: 0, total: 0 }])
+        );
         items.forEach((item) => {
           const date = new Date(item.createdAt);
           if (Number.isNaN(date.getTime())) {
@@ -2270,20 +3760,36 @@ function createRestRouter() {
           if (!totals.has(key)) {
             return;
           }
-          totals.set(key, totals.get(key) + valueSelector(item));
+          const amount = Number(valueSelector(item) || 0);
+          const currency = normalizeCurrency(currencySelector(item));
+          const bucket = totals.get(key);
+          bucket[currency] = (bucket[currency] || 0) + amount;
+          bucket.total += amount;
+          totals.set(key, bucket);
         });
         return monthLabels.map((label) => ({
           month: label.label,
-          value: totals.get(label.key) || 0
+          ...totals.get(label.key) || { USD: 0, INR: 0, total: 0 }
         }));
       };
+      const sumByCurrency = (items, amountSelector, currencySelector) => items.reduce(
+        (acc, item) => {
+          const amount = Number(amountSelector(item) || 0);
+          const currency = normalizeCurrency(currencySelector(item));
+          acc[currency] = (acc[currency] || 0) + amount;
+          return acc;
+        },
+        { USD: 0, INR: 0 }
+      );
       const creditsByMonth = buildMonthlySeries(
         walletTransactions.filter((t) => t.type === "credit"),
-        (item) => item.amount
+        (item) => item.amount,
+        (item) => item.currency || userCurrencyMap.get(item.userId)
       );
       const redemptionsByMonth = buildMonthlySeries(
         walletTransactions.filter((t) => t.type === "debit"),
-        (item) => item.amount
+        (item) => item.amount,
+        (item) => item.currency || userCurrencyMap.get(item.userId)
       );
       const policyCounts = creditRequests.filter((request) => request.type === "policy" && request.policyId).reduce((acc, request) => {
         acc[request.policyId] = (acc[request.policyId] || 0) + 1;
@@ -2302,12 +3808,27 @@ function createRestRouter() {
         acc[type] = (acc[type] || 0) + 1;
         return acc;
       }, {});
-      const totalCredits = walletTransactions.filter((t) => t.type === "credit").reduce((sum, t) => sum + t.amount, 0);
-      const totalRedemptions = walletTransactions.filter((t) => t.type === "debit").reduce((sum, t) => sum + t.amount, 0);
+      const totalCreditsByCurrency = sumByCurrency(
+        walletTransactions.filter((t) => t.type === "credit"),
+        (item) => item.amount,
+        (item) => item.currency || userCurrencyMap.get(item.userId)
+      );
+      const totalRedemptionsByCurrency = sumByCurrency(
+        walletTransactions.filter((t) => t.type === "debit"),
+        (item) => item.amount,
+        (item) => item.currency || userCurrencyMap.get(item.userId)
+      );
+      const totalCredits = Object.values(totalCreditsByCurrency).reduce((sum, value) => sum + value, 0);
+      const totalRedemptions = Object.values(totalRedemptionsByCurrency).reduce(
+        (sum, value) => sum + value,
+        0
+      );
       res.json({
         totals: {
           totalCredits,
+          totalCreditsByCurrency,
           totalRedemptions,
+          totalRedemptionsByCurrency,
           pendingApprovals: creditRequests.filter((r) => r.status === "pending_approval").length,
           pendingSignatures: creditRequests.filter((r) => r.status === "pending_signature").length,
           pendingRedemptions: redemptions.filter((r) => r.status === "pending").length
@@ -2372,13 +3893,17 @@ function createRestRouter() {
           });
           return;
         }
-        const balance = await getWalletBalance(ctxUser.id.toString());
+        const wallet = await getWalletByUserId(ctxUser.id.toString());
         const myRequests = await getCreditRequestsByUserId(ctxUser.id.toString());
         const myPolicies = await getEmployeePolicyAssignmentsByUserId(ctxUser.id.toString());
         const summary = await getWalletSummary(ctxUser.id.toString());
+        const userCurrency = normalizeCurrency(wallet?.currency, getUserCurrency(ctxUser));
         res.json({
-          walletBalance: balance,
-          pendingReviews: myRequests.filter((r) => r.status === "pending_signature").length,
+          walletBalance: wallet?.balance || 0,
+          currency: userCurrency,
+          pendingReviews: myRequests.filter(
+            (r) => r.status === "pending_signature" || r.status === "pending_employee_approval"
+          ).length,
           activePolicies: myPolicies.length,
           thisMonthEarnings: summary.earned
         });
@@ -2435,22 +3960,22 @@ function createRestRouter() {
 
 // _core/vite.js
 import express2 from "express";
-import fs from "fs";
+import fs3 from "fs";
 import { nanoid } from "nanoid";
-import path2 from "path";
+import path4 from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import { createServer as createViteServer } from "vite";
 async function setupVite(app, server) {
-  const __dirname2 = path2.dirname(fileURLToPath2(import.meta.url));
+  const { createServer: createViteServer } = await import("vite");
+  const __dirname2 = path4.dirname(fileURLToPath2(import.meta.url));
   const cacheBase = process.env.LOCALAPPDATA || process.env.TEMP;
-  const cacheDir = cacheBase ? path2.resolve(cacheBase, "freelance-management-vite-cache-backend") : path2.resolve(__dirname2, "../..", "frontend", "vite-cache-backend");
+  const cacheDir = cacheBase ? path4.resolve(cacheBase, "freelance-management-vite-cache-backend") : path4.resolve(__dirname2, "../..", "frontend", "vite-cache-backend");
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
     allowedHosts: true
   };
   const vite = await createViteServer({
-    configFile: path2.resolve(__dirname2, "../..", "frontend", "vite.config.js"),
+    configFile: path4.resolve(__dirname2, "../..", "frontend", "vite.config.js"),
     cacheDir,
     server: serverOptions,
     appType: "custom"
@@ -2459,8 +3984,8 @@ async function setupVite(app, server) {
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
     try {
-      const clientTemplate = path2.resolve(__dirname2, "../..", "frontend", "index.html");
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
+      const clientTemplate = path4.resolve(__dirname2, "../..", "frontend", "index.html");
+      let template = await fs3.promises.readFile(clientTemplate, "utf-8");
       template = template.replace(`src="/src/main.jsx"`, `src="/src/main.jsx?v=${nanoid()}"`);
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
@@ -2471,14 +3996,14 @@ async function setupVite(app, server) {
   });
 }
 function serveStatic(app) {
-  const __dirname2 = path2.dirname(fileURLToPath2(import.meta.url));
-  const distPath = path2.resolve(__dirname2, "../..", "frontend", "dist");
-  if (!fs.existsSync(distPath)) {
+  const __dirname2 = path4.dirname(fileURLToPath2(import.meta.url));
+  const distPath = path4.resolve(__dirname2, "../..", "frontend", "dist");
+  if (!fs3.existsSync(distPath)) {
     console.error(`Could not find the build directory: ${distPath}, make sure to build the frontend first`);
   }
   app.use(express2.static(distPath));
   app.use("*", (_req, res) => {
-    res.sendFile(path2.resolve(distPath, "index.html"));
+    res.sendFile(path4.resolve(distPath, "index.html"));
   });
 }
 
@@ -2487,6 +4012,33 @@ async function startServer() {
   await connectDB();
   const app = express3();
   const server = createServer(app);
+  const rawOrigins = (process.env.CORS_ORIGINS || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+  const allowedOrigins = rawOrigins.map((origin) => origin.replace(/\/+$/, ""));
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      const normalizedOrigin = origin.replace(/\/+$/, "");
+      if (allowedOrigins.length === 0 || allowedOrigins.includes(normalizedOrigin)) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Vary", "Origin");
+      }
+    }
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Headers",
+      req.headers["access-control-request-headers"] || "Content-Type, Authorization"
+    );
+    res.header(
+      "Access-Control-Allow-Methods",
+      req.headers["access-control-request-method"] || "GET,POST,PATCH,DELETE,OPTIONS"
+    );
+    if (req.method === "OPTIONS") {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+  app.use("/uploads", express3.static(path5.resolve(process.cwd(), "uploads")));
   app.use(express3.json({ limit: "50mb" }));
   app.use(express3.urlencoded({ limit: "50mb", extended: true }));
   app.use((req, res, next) => {
@@ -2501,11 +4053,15 @@ async function startServer() {
   app.use("/api", createRestRouter());
   const frontendUrl = process.env.FRONTEND_URL?.trim();
   const backendUrl = process.env.BACKEND_URL?.trim();
-  const hasExternalFrontend = Boolean(frontendUrl && backendUrl && frontendUrl !== backendUrl);
+  const hasExternalFrontend = Boolean(frontendUrl) && frontendUrl !== (backendUrl || "");
   const shouldUseViteMiddleware = process.env.NODE_ENV === "development" && process.env.DISABLE_BACKEND_VITE !== "true" && !hasExternalFrontend;
   if (shouldUseViteMiddleware) {
-    await setupVite(app, server);
-  } else if (process.env.NODE_ENV !== "development") {
+    try {
+      await setupVite(app, server);
+    } catch (error) {
+      logger.warn("[Vite] Failed to start Vite middleware. Skipping.", error?.message || error);
+    }
+  } else if (process.env.NODE_ENV !== "development" && !hasExternalFrontend) {
     serveStatic(app);
   } else {
     logger.info("[Vite] Backend Vite middleware disabled. Using external frontend dev server.");
@@ -2513,6 +4069,14 @@ async function startServer() {
   app.use((error, req, res, next) => {
     if (error?.statusCode) {
       res.status(error.statusCode).json({ message: error.message });
+      return;
+    }
+    if (error?.code === "LIMIT_FILE_SIZE") {
+      res.status(400).json({ message: "File is too large." });
+      return;
+    }
+    if (error?.code === "LIMIT_UNEXPECTED_FILE") {
+      res.status(400).json({ message: "Too many files uploaded." });
       return;
     }
     logger.error("[API] Unexpected error:", error);
