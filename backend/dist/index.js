@@ -146,6 +146,13 @@ var CURRENCY_ALIASES = {
   "indian rupee": "INR",
   "\u20B9": "INR"
 };
+var EMPLOYEE_TYPE_TO_CURRENCY = {
+  permanent_india: "INR",
+  permanent_usa: "USD",
+  freelancer_india: "INR",
+  freelancer_usa: "USD",
+  permanent: "INR"
+};
 function normalizeCurrency(value, fallback = DEFAULT_CURRENCY) {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -161,10 +168,16 @@ function normalizeCurrency(value, fallback = DEFAULT_CURRENCY) {
 }
 function getCurrencyByEmployeeType(employeeType) {
   const normalized = (employeeType || "").toString().trim().toLowerCase();
-  if (normalized.includes("usa")) {
+  if (EMPLOYEE_TYPE_TO_CURRENCY[normalized]) {
+    return EMPLOYEE_TYPE_TO_CURRENCY[normalized];
+  }
+  if (normalized.endsWith("_usa") || normalized.includes("usa")) {
     return "USD";
   }
-  return "INR";
+  if (normalized.endsWith("_india") || normalized.includes("india")) {
+    return "INR";
+  }
+  return DEFAULT_CURRENCY;
 }
 function getCurrencyLocale(currency) {
   return CURRENCY_TO_LOCALE[normalizeCurrency(currency)] || CURRENCY_TO_LOCALE[DEFAULT_CURRENCY];
@@ -544,7 +557,18 @@ function normalizeEmailValue(email) {
   return typeof email === "string" ? email.trim().toLowerCase() : email;
 }
 function normalizeCurrencyValue(currency, employeeType) {
-  return normalizeCurrency(currency, getCurrencyByEmployeeType(normalizeEmployeeTypeValue(employeeType)));
+  const normalizedEmployeeType = normalizeEmployeeTypeValue(employeeType);
+  if (normalizedEmployeeType) {
+    return getCurrencyByEmployeeType(normalizedEmployeeType);
+  }
+  return normalizeCurrency(currency, DEFAULT_CURRENCY);
+}
+function buildSearchRegex(query) {
+  const normalized = (query || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  return new RegExp(escapeRegex(normalized), "i");
 }
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -805,9 +829,11 @@ function normalizeCreditRequestCurrency(request, userCurrencyMap) {
   if (!request) {
     return request;
   }
+  const userId = request.userId?.toString?.() || request.userId;
+  const authoritativeCurrency = userCurrencyMap.get(userId);
   return {
     ...request,
-    currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY)
+    currency: authoritativeCurrency || normalizeCurrency(request.currency, DEFAULT_CURRENCY)
   };
 }
 async function getCreditRequestById(id) {
@@ -869,7 +895,7 @@ async function ensureWallet(userId) {
       updatedAt: /* @__PURE__ */ new Date()
     });
     wallet = created.toObject();
-  } else if (!wallet.currency) {
+  } else if (normalizeCurrency(wallet.currency, userCurrency) !== userCurrency) {
     await Wallet.findOneAndUpdate(
       { userId },
       { $set: { currency: userCurrency, updatedAt: /* @__PURE__ */ new Date() } }
@@ -909,7 +935,7 @@ async function getWalletTransactions(userId) {
   const transactions = await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
   return transactions.map((transaction) => ({
     ...transaction,
-    currency: normalizeCurrency(transaction.currency, wallet.currency)
+    currency: normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)
   }));
 }
 async function getWalletTransactionById(id) {
@@ -921,7 +947,7 @@ async function getWalletTransactionById(id) {
   const wallet = await ensureWallet(transaction.userId);
   return {
     ...transaction,
-    currency: normalizeCurrency(transaction.currency, wallet.currency)
+    currency: normalizeCurrency(wallet.currency, DEFAULT_CURRENCY)
   };
 }
 async function updateWalletTransaction(id, updates) {
@@ -940,10 +966,7 @@ async function getWalletTransactionsByUserIds(userIds) {
   );
   return transactions.map((transaction) => ({
     ...transaction,
-    currency: normalizeCurrency(
-      transaction.currency,
-      walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || DEFAULT_CURRENCY
-    )
+    currency: walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || normalizeCurrency(transaction.currency, DEFAULT_CURRENCY)
   }));
 }
 async function getAllWalletTransactions() {
@@ -962,10 +985,7 @@ async function getAllWalletTransactions() {
   );
   return transactions.map((transaction) => ({
     ...transaction,
-    currency: normalizeCurrency(
-      transaction.currency,
-      walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || DEFAULT_CURRENCY
-    )
+    currency: walletCurrencyMap.get(transaction.userId) || userCurrencyMap.get(transaction.userId) || normalizeCurrency(transaction.currency, DEFAULT_CURRENCY)
   }));
 }
 async function createNotification(data) {
@@ -979,7 +999,13 @@ async function getNotificationsByUserId(userId, limit = 50) {
 }
 async function getUnreadNotificationCount(userId) {
   await ensureConnection();
-  return await Notification.countDocuments({ userId, readAt: { $exists: false } });
+  return await Notification.countDocuments({
+    userId,
+    $or: [
+      { readAt: { $exists: false } },
+      { readAt: null }
+    ]
+  });
 }
 async function markNotificationRead(notificationId, userId) {
   await ensureConnection();
@@ -987,7 +1013,16 @@ async function markNotificationRead(notificationId, userId) {
 }
 async function markAllNotificationsRead(userId) {
   await ensureConnection();
-  await Notification.updateMany({ userId, readAt: { $exists: false } }, { $set: { readAt: /* @__PURE__ */ new Date() } });
+  await Notification.updateMany(
+    {
+      userId,
+      $or: [
+        { readAt: { $exists: false } },
+        { readAt: null }
+      ]
+    },
+    { $set: { readAt: /* @__PURE__ */ new Date() } }
+  );
 }
 async function getWalletSummary(userId) {
   await ensureConnection();
@@ -1014,9 +1049,11 @@ function normalizeRedemptionRequestCurrency(request, userCurrencyMap) {
   if (!request) {
     return request;
   }
+  const userId = request.userId?.toString?.() || request.userId;
+  const authoritativeCurrency = userCurrencyMap.get(userId);
   return {
     ...request,
-    currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY)
+    currency: authoritativeCurrency || normalizeCurrency(request.currency, DEFAULT_CURRENCY)
   };
 }
 async function getRedemptionRequestById(id) {
@@ -1055,6 +1092,66 @@ async function getRedemptionRequestsByStatus(status) {
 async function updateRedemptionRequest(id, updates) {
   await ensureConnection();
   await RedemptionRequest.findByIdAndUpdate(id, { $set: updates });
+}
+async function reconcileCurrencyForUser(userId) {
+  await ensureConnection();
+  const user = await User.findById(userId).select("_id employeeType currency").lean();
+  if (!user) {
+    return null;
+  }
+  const userIdString = user._id.toString();
+  const authoritativeCurrency = normalizeCurrencyValue(user.currency, user.employeeType);
+  const userCurrency = normalizeCurrency(user.currency, authoritativeCurrency);
+  if (userCurrency !== authoritativeCurrency) {
+    await User.findByIdAndUpdate(userIdString, { $set: { currency: authoritativeCurrency } });
+  }
+  const [walletResult, transactionsResult, creditsResult, redemptionsResult] = await Promise.all([
+    Wallet.updateOne(
+      { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+      { $set: { currency: authoritativeCurrency, updatedAt: /* @__PURE__ */ new Date() } }
+    ),
+    WalletTransaction.updateMany(
+      { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+      { $set: { currency: authoritativeCurrency } }
+    ),
+    CreditRequest.updateMany(
+      { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+      { $set: { currency: authoritativeCurrency } }
+    ),
+    RedemptionRequest.updateMany(
+      { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+      { $set: { currency: authoritativeCurrency } }
+    )
+  ]);
+  return {
+    userId: userIdString,
+    currency: authoritativeCurrency,
+    userUpdated: userCurrency !== authoritativeCurrency,
+    walletUpdated: walletResult.modifiedCount || 0,
+    transactionsUpdated: transactionsResult.modifiedCount || 0,
+    creditsUpdated: creditsResult.modifiedCount || 0,
+    redemptionsUpdated: redemptionsResult.modifiedCount || 0
+  };
+}
+async function reconcileCurrencyForAllUsers() {
+  await ensureConnection();
+  const users = await User.find().select("_id").lean();
+  const results = [];
+  for (const user of users) {
+    const result = await reconcileCurrencyForUser(user._id.toString());
+    if (result) {
+      results.push(result);
+    }
+  }
+  return {
+    usersChecked: results.length,
+    usersUpdated: results.filter((entry) => entry.userUpdated).length,
+    walletsUpdated: results.reduce((sum, entry) => sum + entry.walletUpdated, 0),
+    transactionsUpdated: results.reduce((sum, entry) => sum + entry.transactionsUpdated, 0),
+    creditsUpdated: results.reduce((sum, entry) => sum + entry.creditsUpdated, 0),
+    redemptionsUpdated: results.reduce((sum, entry) => sum + entry.redemptionsUpdated, 0),
+    details: results
+  };
 }
 async function createAuditLog(data) {
   await ensureConnection();
@@ -1106,6 +1203,94 @@ async function getAllAccessGrants() {
 async function getActiveAccessGrants(userId) {
   await ensureConnection();
   return await getUserAccess(userId);
+}
+async function searchUsers(query, options = {}) {
+  await ensureConnection();
+  const regex = buildSearchRegex(query);
+  if (!regex) {
+    return [];
+  }
+  const limit = Math.min(Math.max(Number(options.limit) || 8, 1), 25);
+  const searchQuery = {
+    $or: [
+      { name: regex },
+      { email: regex },
+      { role: regex },
+      { employeeType: regex }
+    ]
+  };
+  if (options.userIds?.length) {
+    searchQuery._id = { $in: options.userIds };
+  }
+  if (options.hodId) {
+    searchQuery.$and = [
+      { $or: [{ _id: options.hodId }, { hodId: options.hodId }] }
+    ];
+  }
+  if (options.roles?.length) {
+    const expandedRoles = Array.from(
+      new Set(options.roles.flatMap((role) => expandRoleFilter(role)))
+    );
+    searchQuery.role = { $in: expandedRoles };
+  }
+  const users = await User.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+  return normalizeUserList(users);
+}
+async function searchPolicies(query, options = {}) {
+  await ensureConnection();
+  const regex = buildSearchRegex(query);
+  if (!regex) {
+    return [];
+  }
+  const limit = Math.min(Math.max(Number(options.limit) || 8, 1), 25);
+  const searchQuery = {
+    $or: [
+      { name: regex },
+      { description: regex },
+      { eligibilityCriteria: regex },
+      { calculationLogic: regex },
+      { status: regex }
+    ]
+  };
+  if (options.createdBy) {
+    searchQuery.createdBy = options.createdBy;
+  }
+  if (options.statuses?.length) {
+    searchQuery.status = { $in: options.statuses };
+  }
+  return await Policy.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+}
+async function searchCreditRequests(query, options = {}) {
+  await ensureConnection();
+  const regex = buildSearchRegex(query);
+  if (!regex) {
+    return [];
+  }
+  const limit = Math.min(Math.max(Number(options.limit) || 10, 1), 30);
+  const searchQuery = {
+    $or: [
+      { type: regex },
+      { status: regex },
+      { notes: regex },
+      { calculationBreakdown: regex },
+      { currency: regex }
+    ]
+  };
+  if (options.userIds?.length) {
+    searchQuery.userId = { $in: options.userIds };
+  }
+  if (options.hodId) {
+    searchQuery.hodId = options.hodId;
+  }
+  if (options.initiatorId) {
+    searchQuery.initiatorId = options.initiatorId;
+  }
+  if (options.statuses?.length) {
+    searchQuery.status = { $in: options.statuses };
+  }
+  const requests = await CreditRequest.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+  const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+  return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 
 // _core/env.js
@@ -1716,7 +1901,7 @@ var creditRequestUpload = multer({
   }
 });
 var normalizeEmployeeType = (type) => type === "permanent" ? "permanent_india" : type;
-var getUserCurrency = (user) => normalizeCurrency(user?.currency, getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType)));
+var getUserCurrency = (user) => getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType));
 var formatMoney2 = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
 var asyncHandler = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -1846,10 +2031,7 @@ async function hydrateCreditRequests(requests) {
     initiator: userMap.get(request.initiatorId) || null,
     hod: request.hodId ? userMap.get(request.hodId) || null : null,
     policy: request.policyId ? policyMap.get(request.policyId) || null : null,
-    currency: normalizeCurrency(
-      request.currency,
-      getUserCurrency(userMap.get(request.userId) || null)
-    )
+    currency: getUserCurrency(userMap.get(request.userId) || null)
   }));
 }
 async function hydrateRedemptionRequests(requests) {
@@ -1862,10 +2044,7 @@ async function hydrateRedemptionRequests(requests) {
   return requests.map((request) => ({
     ...request,
     user: userMap.get(request.userId) || null,
-    currency: normalizeCurrency(
-      request.currency,
-      getUserCurrency(userMap.get(request.userId) || null)
-    )
+    currency: getUserCurrency(userMap.get(request.userId) || null)
   }));
 }
 var buildTimelineEntry = ({ step, role, actor, signatureId, message, metadata }) => ({
@@ -2105,6 +2284,7 @@ function createRestRouter() {
       if (input.role === "admin") {
         await updateUser(user._id.toString(), { hodId: user._id.toString() });
       }
+      await reconcileCurrencyForUser(user._id.toString());
       if (normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
         await setEmployeeInitiators(user._id.toString(), freelancerInitiatorIds, ctxUser.id);
       }
@@ -2190,6 +2370,7 @@ function createRestRouter() {
         updates.employeeType = normalizedEmployeeType;
       }
       await updateUser(id, updates);
+      await reconcileCurrencyForUser(id);
       if (normalizedEmployeeType && normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
         await setEmployeeInitiators(id, freelancerInitiatorIds, ctxUser.id);
       }
@@ -2217,6 +2398,33 @@ function createRestRouter() {
         entityId: input.id
       });
       res.json({ success: true });
+    })
+  );
+  router.post(
+    "/admin/currency/reconcile",
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireRole(req, ["admin"], "Admin access required");
+      const input = parseInput(
+        z.object({
+          userId: z.string().optional()
+        }),
+        req.body ?? {}
+      );
+      const result = input.userId ? await reconcileCurrencyForUser(input.userId) : await reconcileCurrencyForAllUsers();
+      if (input.userId && !result) {
+        throw NotFoundError("User not found");
+      }
+      await createAuditLog({
+        userId: ctxUser.id,
+        action: "currency_reconciled",
+        entityType: "currency",
+        entityId: input.userId || "all",
+        details: JSON.stringify({
+          scope: input.userId ? "user" : "all",
+          userId: input.userId || null
+        })
+      });
+      res.json({ success: true, result });
     })
   );
   router.get(
@@ -3392,7 +3600,15 @@ function createRestRouter() {
         throw BadRequestError("Selected credit has already been redeemed.");
       }
       const amount = Number(creditTxn.amount || 0);
-      const redemptionCurrency = normalizeCurrency(creditTxn.currency, getUserCurrency(ctxUser));
+      await reconcileCurrencyForUser(ctxUser.id.toString());
+      const dbUser = await getUserById(ctxUser.id.toString());
+      const redemptionCurrency = getUserCurrency(dbUser || ctxUser);
+      const creditCurrency = normalizeCurrency(creditTxn.currency, redemptionCurrency);
+      if (creditCurrency !== redemptionCurrency) {
+        throw BadRequestError(
+          `Currency mismatch found for this credit. Expected ${redemptionCurrency}. Please refresh and try again.`
+        );
+      }
       const balanceBefore = await getWalletBalance(ctxUser.id.toString());
       if (balanceBefore < amount) {
         throw BadRequestError("Insufficient balance");
@@ -3539,13 +3755,18 @@ function createRestRouter() {
       if (!request) {
         throw NotFoundError("Not found");
       }
-      const employee = await getUserById(request.userId?.toString?.() || request.userId);
-      const expectedCurrency = normalizeCurrency(request.currency, getUserCurrency(employee));
+      const employeeId = request.userId?.toString?.() || request.userId;
+      await reconcileCurrencyForUser(employeeId);
+      const employee = await getUserById(employeeId);
+      const expectedCurrency = getUserCurrency(employee);
       const processedCurrency = normalizeCurrency(input.paymentCurrency, expectedCurrency);
       if (processedCurrency !== expectedCurrency) {
         throw BadRequestError(
           `Payment currency mismatch. This request must be processed in ${expectedCurrency}.`
         );
+      }
+      if (normalizeCurrency(request.currency, expectedCurrency) !== expectedCurrency) {
+        await updateRedemptionRequest(input.requestId, { currency: expectedCurrency });
       }
       const timelineLog = appendTimelineEntry(
         request.timelineLog,
@@ -3916,6 +4137,107 @@ function createRestRouter() {
           pendingRedemptions: 0
         });
       }
+    })
+  );
+  router.get(
+    "/search/global",
+    asyncHandler(async (req, res) => {
+      const ctxUser = requireAuth(req);
+      const input = parseInput(
+        z.object({
+          q: z.string().trim().min(2, "Enter at least 2 characters"),
+          limit: z.coerce.number().min(1).max(12).optional()
+        }),
+        req.query
+      );
+      const limit = input.limit ?? 6;
+      const query = input.q.trim();
+      const dedupeById = (items) => {
+        const seen = /* @__PURE__ */ new Set();
+        return items.filter((item) => {
+          const id = item?._id?.toString?.() || item?.id;
+          if (!id || seen.has(id)) {
+            return false;
+          }
+          seen.add(id);
+          return true;
+        });
+      };
+      let users = [];
+      let policies = [];
+      let requests = [];
+      if (ctxUser.role === "admin") {
+        [users, policies, requests] = await Promise.all([
+          searchUsers(query, { limit }),
+          searchPolicies(query, { limit }),
+          searchCreditRequests(query, { limit: limit * 2 })
+        ]);
+      } else if (ctxUser.role === "hod") {
+        [users, policies, requests] = await Promise.all([
+          searchUsers(query, { limit, hodId: ctxUser.id }),
+          searchPolicies(query, { limit }),
+          searchCreditRequests(query, { limit: limit * 2, hodId: ctxUser.id })
+        ]);
+      } else if (ctxUser.role === "employee") {
+        const [myRequests, initiatedRequests, policyLinks] = await Promise.all([
+          searchCreditRequests(query, { limit: limit * 2, userIds: [ctxUser.id] }),
+          searchCreditRequests(query, { limit: limit * 2, initiatorId: ctxUser.id }),
+          getEmployeePolicyAssignmentsByUserId(ctxUser.id)
+        ]);
+        users = await searchUsers(query, { limit, userIds: [ctxUser.id] });
+        const policyIds = Array.from(
+          new Set((policyLinks || []).map((assignment) => assignment.policyId).filter(Boolean))
+        );
+        if (policyIds.length > 0) {
+          const assignedPolicies = await getPoliciesByIds(policyIds);
+          const q = query.toLowerCase();
+          policies = assignedPolicies.filter((policy) => {
+            const hay = `${policy.name || ""} ${policy.description || ""} ${policy.status || ""}`.toLowerCase();
+            return hay.includes(q);
+          }).slice(0, limit);
+        }
+        requests = dedupeById([...myRequests || [], ...initiatedRequests || []]).slice(0, limit * 2);
+      } else {
+        users = await searchUsers(query, { limit, userIds: [ctxUser.id] });
+        policies = await searchPolicies(query, { limit, statuses: ["active"] });
+        requests = await searchCreditRequests(query, { limit: limit * 2, statuses: ["approved"] });
+      }
+      const hydratedRequests = await hydrateCreditRequests(requests);
+      const requestSummaries = hydratedRequests.slice(0, limit * 2).map((request) => ({
+        id: request._id?.toString(),
+        label: request.type === "policy" ? request.policy?.name || "Policy request" : "Freelancer request",
+        subtitle: `${request.user?.name || "Unknown user"} \u2022 ${request.status}`,
+        amount: request.amount,
+        currency: request.currency,
+        status: request.status,
+        type: request.type,
+        route: request.status === "pending_approval" || request.status === "pending_employee_approval" ? "/approvals" : "/transactions"
+      }));
+      const userSummaries = users.slice(0, limit).map((user) => ({
+        id: user._id?.toString(),
+        label: user.name || user.email,
+        subtitle: `${user.email} \u2022 ${user.role}`,
+        role: user.role,
+        route: user._id?.toString() === ctxUser.id ? "/profile" : "/user-management"
+      }));
+      const policySummaries = policies.slice(0, limit).map((policy) => ({
+        id: policy._id?.toString(),
+        label: policy.name,
+        subtitle: policy.status || "draft",
+        status: policy.status,
+        route: "/policies"
+      }));
+      res.json({
+        query,
+        users: userSummaries,
+        policies: policySummaries,
+        requests: requestSummaries,
+        counts: {
+          users: userSummaries.length,
+          policies: policySummaries.length,
+          requests: requestSummaries.length
+        }
+      });
     })
   );
   router.post(

@@ -12,10 +12,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Loader2, UserPlus, Settings2, Trash2, Calendar, Pencil, Check, ChevronsUpDown, X } from "lucide-react";
+import { Loader2, UserPlus, Settings2, Trash2, Calendar, Pencil, Check, ChevronsUpDown, X, Search, Users, Briefcase, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getUserCurrency } from "@/lib/currency";
+import { KpiCard, PageHeader, PageShell } from "@/components/layout/PageLayout";
   
 const employeeTypeLabel = (type) => {
   switch (type) {
@@ -35,6 +36,10 @@ const employeeTypeLabel = (type) => {
 export default function EmployeeManagement() {
   const { user } = useAuth();
   const isManager = user?.role === "admin" || user?.role === "hod";
+  const currentUserId = useMemo(
+    () => user?.id?.toString?.() || user?._id?.toString?.() || "",
+    [user?.id, user?._id],
+  );
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
@@ -64,6 +69,8 @@ export default function EmployeeManagement() {
     hodId: "",
     freelancerInitiatorIds: [],
   });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [employeeTypeFilter, setEmployeeTypeFilter] = useState("all");
 
   const { data: team, isLoading, refetch } = api.team.getMyTeam.useQuery();
   const { data: users } = api.users.getAll.useQuery(undefined, { enabled: isManager });
@@ -107,7 +114,7 @@ export default function EmployeeManagement() {
   const resetForm = () => {
     setFormData({
       employeeType: "permanent_india",
-      hodId: user?.role === "hod" ? user.id : "",
+      hodId: user?.role === "hod" ? currentUserId : "",
       freelancerInitiatorIds: [],
     });
     setSelectedUserIds([]);
@@ -120,10 +127,10 @@ export default function EmployeeManagement() {
       return [];
     }
     if (user?.role === "hod") {
-      return (users || []).filter((entry) => entry?.hodId?.toString() === user.id);
+      return (users || []).filter((entry) => entry?.hodId?.toString() === currentUserId);
     }
     return users || [];
-  }, [isManager, user?.role, user?.id, users]);
+  }, [isManager, user?.role, currentUserId, users]);
   const employees = useMemo(
     () => (team || []).filter((member) => member.role === "employee" && member.isEmployee !== false),
     [team],
@@ -177,7 +184,7 @@ export default function EmployeeManagement() {
     return fallback?.name || fallback?.email || "-";
   };
   const canInitiateForEmployee = (employee) => {
-    if (!user?.id) {
+    if (!currentUserId) {
       return false;
     }
     if (!employee?.employeeType?.startsWith("freelancer")) {
@@ -188,17 +195,17 @@ export default function EmployeeManagement() {
       .filter(Boolean);
     const fallbackIds = (employee.freelancerInitiatorIds || []).map((id) => id?.toString()).filter(Boolean);
     const allIds = hydratedIds.length > 0 ? hydratedIds : fallbackIds;
-    return allIds.includes(user.id.toString());
+    return allIds.includes(currentUserId);
   };
   const getInitiatablePolicyAssignments = (employee) => {
-    if (!employee?.policyAssignments || !user?.id) {
+    if (!employee?.policyAssignments || !currentUserId) {
       return [];
     }
     return employee.policyAssignments.filter((assignment) => {
       const initiatorIds = (assignment.initiators || [])
         .map((init) => init?._id?.toString())
         .filter(Boolean);
-      return initiatorIds.includes(user.id.toString());
+      return initiatorIds.includes(currentUserId);
     });
   };
 
@@ -217,7 +224,7 @@ export default function EmployeeManagement() {
       toast.error("Please select employee type.");
       return;
     }
-    const hodIdToUse = user?.role === "hod" ? user.id : formData.hodId;
+    const hodIdToUse = user?.role === "hod" ? currentUserId : formData.hodId;
     if (!hodIdToUse) {
       toast.error("Please select HOD.");
       return;
@@ -373,7 +380,7 @@ export default function EmployeeManagement() {
           {
             amount: amountValue,
             note: "Initiator submission",
-            addedBy: user?.id,
+            addedBy: currentUserId || undefined,
             addedAt: new Date().toISOString(),
           },
         ],
@@ -451,7 +458,7 @@ export default function EmployeeManagement() {
           {
             amount: amountValue,
             note: "Policy initiation",
-            addedBy: user?.id,
+            addedBy: currentUserId || undefined,
             addedAt: new Date().toISOString(),
           },
         ],
@@ -498,6 +505,47 @@ export default function EmployeeManagement() {
     if (parts.length === 1) return parts[0][0]?.toUpperCase() || "U";
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   };
+  const filteredEmployees = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return employees
+      .filter((employee) => {
+        if (employeeTypeFilter !== "all" && employee.employeeType !== employeeTypeFilter) {
+          return false;
+        }
+        if (!query) {
+          return true;
+        }
+        const policyNames = (employee.policyAssignments || [])
+          .map((assignment) => assignment.policy?.name)
+          .filter(Boolean)
+          .join(" ");
+        const searchable = [
+          employee.name,
+          employee.email,
+          employeeTypeLabel(employee.employeeType),
+          getHodDisplayName(employee),
+          getInitiatorNames(employee).join(" "),
+          getPolicyInitiatorNames(employee).join(" "),
+          policyNames,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return searchable.includes(query);
+      })
+      .sort((a, b) => {
+        const left = (a?.name || a?.email || "").toLowerCase();
+        const right = (b?.name || b?.email || "").toLowerCase();
+        return left.localeCompare(right);
+      });
+  }, [employees, searchQuery, employeeTypeFilter, usersById]);
+  const employeeStats = useMemo(() => {
+    const total = employees.length;
+    const permanent = employees.filter((entry) => entry.employeeType?.startsWith("permanent")).length;
+    const freelancer = employees.filter((entry) => entry.employeeType?.startsWith("freelancer")).length;
+    const withPolicies = employees.filter((entry) => (entry.policyAssignments || []).length > 0).length;
+    return { total, permanent, freelancer, withPolicies };
+  }, [employees]);
 
   if (isLoading) {
     return (
@@ -508,13 +556,11 @@ export default function EmployeeManagement() {
   }
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Employee Management</h1>
-          <p className="text-gray-600 mt-1">Manage employees, freelancers, and policy assignments</p>
-        </div>
-        {isManager && (
+    <PageShell>
+      <PageHeader
+        title="Employee Management"
+        description="Manage employees, freelancers, and policy assignments"
+        action={isManager && (
         <Dialog open={isDialogOpen} onOpenChange={handleDialogClose}>
           <DialogTrigger asChild>
             <Button
@@ -699,67 +745,135 @@ export default function EmployeeManagement() {
           </DialogContent>
         </Dialog>
         )}
+      />
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <KpiCard title="Total Employees" value={employeeStats.total} hint="Current team size" icon={Users} tone="primary" />
+        <KpiCard title="Permanent" value={employeeStats.permanent} hint="Permanent workforce" icon={ShieldCheck} tone="neutral" />
+        <KpiCard title="Freelancers" value={employeeStats.freelancer} hint="Freelancer contributors" icon={Briefcase} tone="warning" />
+        <KpiCard title="With Policies" value={employeeStats.withPolicies} hint="Assigned policy coverage" icon={Calendar} tone="success" />
       </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid gap-3 md:grid-cols-[1fr_240px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search employee, email, policy, initiator..."
+                className="pl-9"
+              />
+            </div>
+            <Select value={employeeTypeFilter} onValueChange={setEmployeeTypeFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All employee types</SelectItem>
+                <SelectItem value="permanent_india">Permanent (India)</SelectItem>
+                <SelectItem value="permanent_usa">Permanent (USA)</SelectItem>
+                <SelectItem value="freelancer_india">Freelancer (India)</SelectItem>
+                <SelectItem value="freelancer_usa">Freelancer (USA)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
 
       {employees.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               {isManager
                 ? "No employees yet. Add your first employee to get started."
                 : "No employees assigned to you yet."}
             </p>
           </CardContent>
         </Card>
+      ) : filteredEmployees.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">
+              No employees matched your search.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {employees.map((employee) => (
-            <Card key={employee._id.toString()} className="hover:shadow-lg transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    {isManager ? (
-                      <Button
-                        variant="link"
-                        className="p-0 h-auto text-left"
-                        onClick={() => openAssignmentDrawer(employee)}
-                      >
-                        <CardTitle className="text-lg truncate">{employee.name}</CardTitle>
-                      </Button>
-                    ) : (
-                      <CardTitle className="text-lg truncate">{employee.name}</CardTitle>
-                    )}
-                    <p className="text-sm text-gray-600 mt-1 truncate">{employee.email}</p>
+        <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(330px,1fr))] gap-6">
+          {filteredEmployees.map((employee) => {
+            const initiatablePolicyAssignments = getInitiatablePolicyAssignments(employee);
+            const canInitiate = canInitiateForEmployee(employee);
+            const hasCardActions = canInitiate || initiatablePolicyAssignments.length > 0;
+            const initiatorsText = employee.employeeType?.startsWith("freelancer")
+              ? getInitiatorNames(employee).join(", ") || "-"
+              : "-";
+            const policiesText = (employee.policyAssignments || [])
+              .map((assignment) => assignment.policy?.name)
+              .filter(Boolean)
+              .join(", ");
+            const policyInitiatorsText = getPolicyInitiatorNames(employee).join(", ");
+
+            return (
+            <Card key={employee._id.toString()} className="card-hover h-[460px] overflow-hidden border-border/80">
+              <CardHeader className="pb-2">
+                <div
+                  className={`grid items-start overflow-hidden ${
+                    isManager ? "grid-cols-[minmax(0,1fr)_auto] gap-3" : "grid-cols-1"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+                    <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+                      {getInitials(employee.name || employee.email)}
+                    </div>
+                    <div className="min-w-0 flex-1 overflow-hidden pr-1">
+                    <CardTitle className="truncate text-base" title={employee.name || "Unnamed"}>
+                      {employee.name || "Unnamed"}
+                    </CardTitle>
+                    <p className="mt-1 truncate text-sm text-muted-foreground" title={employee.email || "-"}>
+                      {employee.email || "-"}
+                    </p>
+                    </div>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    {isManager && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(employee._id.toString())}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(employee)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Sheet
-                          open={selectedEmployee?._id?.toString() === employee._id?.toString()}
-                          onOpenChange={(open) => {
-                            if (!open) {
-                              setSelectedEmployee(null);
-                              setAssignmentForm({ policyId: "", initiatorIds: [], effectiveDate: "" });
-                            }
-                          }}
-                        >
-                          <SheetTrigger asChild>
-                            <Button variant="ghost" size="sm" onClick={() => openAssignmentDrawer(employee)}>
-                              <Settings2 className="h-4 w-4" />
-                            </Button>
-                          </SheetTrigger>
-                          <SheetContent className="w-105 sm:w-140 overflow-y-auto">
+                  {isManager && (
+                    <div className="flex h-8 w-[116px] shrink-0 items-center justify-end gap-1.5 pl-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleDelete(employee._id.toString())}
+                        className="h-8 w-8 shrink-0 rounded-lg text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="h-8 w-8 shrink-0 rounded-lg"
+                        onClick={() => handleEdit(employee)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Sheet
+                        open={selectedEmployee?._id?.toString() === employee._id?.toString()}
+                        onOpenChange={(open) => {
+                          if (!open) {
+                            setSelectedEmployee(null);
+                            setAssignmentForm({ policyId: "", initiatorIds: [], effectiveDate: "" });
+                          }
+                        }}
+                      >
+                        <SheetTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="h-8 w-8 shrink-0 rounded-lg"
+                            onClick={() => openAssignmentDrawer(employee)}
+                          >
+                            <Settings2 className="h-4 w-4" />
+                          </Button>
+                        </SheetTrigger>
+                        <SheetContent className="w-105 sm:w-140 overflow-y-auto">
                         <SheetHeader>
                           <SheetTitle>Assign Policy to {employee.name}</SheetTitle>
                         </SheetHeader>
@@ -858,72 +972,85 @@ export default function EmployeeManagement() {
                             </div>
                           )}
                         </div>
-                      </SheetContent>
-                    </Sheet>
-                      </>
-                    )}
-                  </div>
+                        </SheetContent>
+                      </Sheet>
+                    </div>
+                  )}
                 </div>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Type</span>
-                    <Badge variant="outline">{employeeTypeLabel(employee.employeeType)}</Badge>
-                  </div>
-                  {employee.hodId && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">HOD</span>
-                      <span>{getHodDisplayName(employee)}</span>
-                    </div>
-                  )}
-                  {employee.employeeType?.startsWith("freelancer") && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">Initiators</span>
-                      <span className="text-right">
-                        {getInitiatorNames(employee).length > 0 ? getInitiatorNames(employee).join(", ") : "-"}
-                      </span>
-                    </div>
-                  )}
-                  {employee.policyAssignments && employee.policyAssignments.length > 0 && (
-                    <div className="mt-4 space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Policies</span>
-                        <span className="text-right">
-                          {employee.policyAssignments
-                            .map((assignment) => assignment.policy?.name)
-                            .filter(Boolean)
-                            .join(", ") || employee.policyAssignments.length}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Policy Initiators</span>
-                        <span className="text-right">
-                          {getPolicyInitiatorNames(employee).length > 0
-                            ? getPolicyInitiatorNames(employee).join(", ")
-                            : "-"}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  {(canInitiateForEmployee(employee) || getInitiatablePolicyAssignments(employee).length > 0) && (
-                    <div className="pt-4 flex flex-wrap justify-end gap-2">
-                      {getInitiatablePolicyAssignments(employee).length > 0 && (
-                        <Button variant="outline" size="sm" onClick={() => openPolicyDialog(employee)}>
-                          Initiate Policy
-                        </Button>
-                      )}
-                      {canInitiateForEmployee(employee) && (
-                        <Button variant="outline" size="sm" onClick={() => openInitiateDialog(employee)}>
-                          Initiate Freelance
-                        </Button>
-                      )}
-                    </div>
-                  )}
+              <CardContent className="flex h-full flex-1 flex-col gap-4 overflow-hidden">
+                <div className="flex min-h-[62px] flex-wrap content-start items-start gap-2">
+                  <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
+                    {employeeTypeLabel(employee.employeeType)}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
+                    {getUserCurrency(employee)}
+                  </Badge>
+                  <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                    {(employee.policyAssignments || []).length} Policies
+                  </Badge>
                 </div>
+
+                <div className="grid flex-1 content-start grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                  <span className="text-muted-foreground">HOD</span>
+                  <span className="min-w-0 truncate text-right font-medium" title={getHodDisplayName(employee)}>
+                    {getHodDisplayName(employee)}
+                  </span>
+
+                  <span className="text-muted-foreground">Initiators</span>
+                  <span className="min-w-0 truncate text-right font-medium" title={initiatorsText}>
+                    {initiatorsText}
+                  </span>
+
+                  <span className="text-muted-foreground">Policies</span>
+                  <span className="min-w-0 truncate text-right font-medium" title={policiesText || "-"}>
+                    {policiesText || "-"}
+                  </span>
+
+                  <span className="text-muted-foreground">Policy Initiators</span>
+                  <span className="min-w-0 truncate text-right font-medium" title={policyInitiatorsText || "-"}>
+                    {policyInitiatorsText || "-"}
+                  </span>
+                </div>
+
+                <div className="mt-auto h-[66px] border-t pt-3">
+                  {hasCardActions ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      {initiatablePolicyAssignments.length > 0 ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-full min-w-0 whitespace-nowrap px-3"
+                          onClick={() => openPolicyDialog(employee)}
+                        >
+                        Initiate Policy
+                        </Button>
+                      ) : (
+                        <div />
+                      )}
+                      {canInitiate ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9 w-full min-w-0 whitespace-nowrap px-3"
+                          onClick={() => openInitiateDialog(employee)}
+                        >
+                        Initiate Freelance
+                        </Button>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex h-[36px] items-center justify-center">
+                      <span className="text-xs font-medium text-muted-foreground">No actions available</span>
+                    </div>
+                  )}
+                  </div>
               </CardContent>
             </Card>
-          ))}
+          );
+          })}
         </div>
       )}
 
@@ -1125,7 +1252,7 @@ export default function EmployeeManagement() {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }
 

@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Loader2, CheckCircle, DollarSign, User, FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { CURRENCY_VALUES, formatCurrencyValue, getUserCurrency, normalizeCurrency } from "@/lib/currency";
+import { formatCurrencyValue, getUserCurrency, normalizeCurrency } from "@/lib/currency";
+import { PageShell } from "@/components/layout/PageLayout";
 export default function AccountsManager() {
     const [selectedRedemption, setSelectedRedemption] = useState(null);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -32,14 +33,21 @@ export default function AccountsManager() {
             toast.error(error.message);
         },
     });
+    const getExpectedCurrency = (redemption) => normalizeCurrency(redemption?.currency, getUserCurrency(redemption?.user));
     const handleProcess = (redemption) => {
         setSelectedRedemption(redemption);
-        setPaymentCurrency(normalizeCurrency(redemption?.currency, getUserCurrency(redemption?.user)));
+        setPaymentCurrency(getExpectedCurrency(redemption));
         setIsDialogOpen(true);
     };
     const confirmProcess = () => {
         if (!paymentReference.trim()) {
             toast.error("Please provide a payment/transaction reference");
+            return;
+        }
+        const expectedCurrency = getExpectedCurrency(selectedRedemption);
+        if (paymentCurrency !== expectedCurrency) {
+            toast.error(`This request must be processed in ${expectedCurrency}`);
+            setPaymentCurrency(expectedCurrency);
             return;
         }
         processRedemption.mutate({
@@ -48,6 +56,20 @@ export default function AccountsManager() {
             paymentNotes: paymentNotes || undefined,
             paymentCurrency,
         });
+    };
+    const getEmployeeTypeLabel = (employeeType) => {
+        switch (employeeType) {
+            case "freelancer_usa":
+                return "Freelancer (USA)";
+            case "freelancer_india":
+                return "Freelancer (India)";
+            case "permanent_usa":
+                return "Permanent (USA)";
+            case "permanent_india":
+                return "Permanent (India)";
+            default:
+                return "Employee";
+        }
     };
     const getStatusColor = (status) => {
         const colors = {
@@ -63,7 +85,7 @@ export default function AccountsManager() {
         <Loader2 className="w-8 h-8 animate-spin text-primary"/>
       </div>);
     }
-    return (<div className="space-y-6 p-6">
+    return (<PageShell>
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Redemption Management</h1>
         <p className="text-muted-foreground mt-1">Process redemption requests and manage payments</p>
@@ -94,9 +116,13 @@ export default function AccountsManager() {
                         <Badge className={`${getStatusColor(redemption.status)} flex items-center gap-1 w-fit`}>
                           PENDING PAYMENT
                         </Badge>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{getEmployeeTypeLabel(redemption.user?.employeeType)}</Badge>
+                          <Badge variant="secondary">{getExpectedCurrency(redemption)}</Badge>
+                        </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-3xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, redemption.currency)}</p>
+                        <p className="text-3xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, getExpectedCurrency(redemption))}</p>
                         <p className="text-xs text-muted-foreground mt-1">
                           Requested {new Date(redemption.createdAt).toLocaleDateString()}
                         </p>
@@ -144,9 +170,13 @@ export default function AccountsManager() {
                           <CheckCircle className="w-4 h-4"/>
                           COMPLETED
                         </Badge>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{getEmployeeTypeLabel(redemption.user?.employeeType)}</Badge>
+                          <Badge variant="secondary">{getExpectedCurrency(redemption)}</Badge>
+                        </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-2xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, redemption.currency)}</p>
+                        <p className="text-2xl font-bold text-green-600">{formatCurrencyValue(redemption.amount, getExpectedCurrency(redemption))}</p>
                         <p className="text-xs text-muted-foreground mt-1">
                           Processed {new Date(redemption.processedAt).toLocaleDateString()}
                         </p>
@@ -180,11 +210,11 @@ export default function AccountsManager() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Amount:</span>
-                  <span className="text-sm font-bold text-green-600">{formatCurrencyValue(selectedRedemption.amount, selectedRedemption.currency)}</span>
+                  <span className="text-sm font-bold text-green-600">{formatCurrencyValue(selectedRedemption.amount, getExpectedCurrency(selectedRedemption))}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Currency:</span>
-                  <span className="text-sm">{normalizeCurrency(selectedRedemption.currency, paymentCurrency)}</span>
+                  <span className="text-sm">{getExpectedCurrency(selectedRedemption)}</span>
                 </div>
                 {selectedRedemption.notes && (
                   <div className="pt-2 border-t">
@@ -201,16 +231,16 @@ export default function AccountsManager() {
 
             <div className="space-y-2">
               <Label>Payment Currency *</Label>
-              <Select value={paymentCurrency} onValueChange={setPaymentCurrency}>
+              <Select value={paymentCurrency} onValueChange={setPaymentCurrency} disabled={!selectedRedemption}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select currency" />
                 </SelectTrigger>
                 <SelectContent>
-                  {CURRENCY_VALUES.map((currency) => (
-                    <SelectItem key={currency} value={currency}>
-                      {currency}
+                  {selectedRedemption ? (
+                    <SelectItem value={getExpectedCurrency(selectedRedemption)}>
+                      {getExpectedCurrency(selectedRedemption)}
                     </SelectItem>
-                  ))}
+                  ) : null}
                 </SelectContent>
               </Select>
             </div>
@@ -237,6 +267,5 @@ export default function AccountsManager() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>);
+    </PageShell>);
 }
-

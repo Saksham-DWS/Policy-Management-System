@@ -11,6 +11,7 @@ import { Loader2, Wallet, DollarSign, TrendingUp, TrendingDown, Clock, CheckCirc
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
+import { PageShell } from "@/components/layout/PageLayout";
 
 export default function MyAccount() {
   const { user } = useAuth();
@@ -88,7 +89,7 @@ export default function MyAccount() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <PageShell>
       <div>
         <h1 className="text-3xl font-bold tracking-tight">My Account</h1>
         <p className="text-muted-foreground mt-1">Manage your wallet and redemptions</p>
@@ -264,6 +265,6 @@ export default function MyAccount() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

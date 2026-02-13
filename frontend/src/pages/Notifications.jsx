@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
-import { api } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { api, buildQueryKey } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Bell, CheckCircle2 } from "lucide-react";
+import { PageShell } from "@/components/layout/PageLayout";
 
 const typeStyles = {
   info: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200",
@@ -15,12 +17,22 @@ const typeStyles = {
  
 export default function Notifications() {
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
   const { data: notifications, isLoading, refetch } = api.notifications.getMy.useQuery({ limit: 100 });
+
+  const refreshNotifications = async () => {
+    await Promise.all([
+      refetch(),
+      queryClient.invalidateQueries({ queryKey: buildQueryKey("notifications.getUnreadCount") }),
+      queryClient.invalidateQueries({ queryKey: buildQueryKey("notifications.getMy") }),
+    ]);
+  };
+
   const markRead = api.notifications.markRead.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => refreshNotifications(),
   });
   const markAllRead = api.notifications.markAllRead.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => refreshNotifications(),
   });
  
   const unreadCount = useMemo(
@@ -37,7 +49,7 @@ export default function Notifications() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <PageShell>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
@@ -72,8 +84,8 @@ export default function Notifications() {
               {notifications.map((notification) => (
                 <div
                   key={notification._id?.toString()}
-                  className={`border rounded-lg p-4 transition-colors hover:bg-gray-100 ${
-                    notification.readAt ? "bg-background" : "bg-gray-100"
+                  className={`border rounded-lg p-4 transition-colors hover:bg-muted/40 ${
+                    notification.readAt ? "bg-background" : "bg-muted/30"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -121,6 +133,6 @@ export default function Notifications() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

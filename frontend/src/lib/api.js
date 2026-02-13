@@ -259,4 +259,7 @@ export const api = {
     dashboard: {
         getStats: createQuery("dashboard.getStats", () => get("/api/dashboard/stats")),
     },
+    search: {
+        global: createQuery("search.global", (input) => get("/api/search/global", input)),
+    },
 };

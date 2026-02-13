@@ -13,6 +13,7 @@ import { Loader2, Plus, DollarSign, FileText, Clock, CheckCircle, XCircle, Alert
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { formatCurrencyValue, getUserCurrency } from "@/lib/currency";
+import { PageShell } from "@/components/layout/PageLayout";
 
 const statusLabels = {
   pending_signature: "Pending Signature",
@@ -185,7 +186,7 @@ export default function Transactions() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <PageShell>
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Credit History</h1>
@@ -223,7 +224,7 @@ export default function Transactions() {
                         <SelectContent>
                           {(initiatorScope?.policyAssignments || []).map((assignment) => (
                             <SelectItem key={assignment.assignmentId} value={assignment.assignmentId}>
-                              {assignment.policy?.name} � {assignment.user?.name}
+                              {assignment.policy?.name} - {assignment.user?.name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -357,7 +358,7 @@ export default function Transactions() {
               {requestsToDisplay.map((request) => {
                 const requestCurrency = request.currency || getUserCurrency(request.user);
                 return (
-                <div key={request._id?.toString()} className="border rounded-lg p-4 hover:bg-gray-100 transition-colors">
+                <div key={request._id?.toString()} className="border rounded-lg p-4 hover:bg-muted/40 transition-colors">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
@@ -447,7 +448,9 @@ export default function Transactions() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </PageShell>
   );
 }
+
+
 

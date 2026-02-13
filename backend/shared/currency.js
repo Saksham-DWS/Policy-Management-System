@@ -17,7 +17,15 @@ const CURRENCY_ALIASES = {
     rupee: "INR",
     rupees: "INR",
     "indian rupee": "INR",
-    "₹": "INR",
+    "\u20b9": "INR",
+};
+
+const EMPLOYEE_TYPE_TO_CURRENCY = {
+    permanent_india: "INR",
+    permanent_usa: "USD",
+    freelancer_india: "INR",
+    freelancer_usa: "USD",
+    permanent: "INR",
 };
 
 export function normalizeCurrency(value, fallback = DEFAULT_CURRENCY) {
@@ -36,10 +44,16 @@ export function normalizeCurrency(value, fallback = DEFAULT_CURRENCY) {
 
 export function getCurrencyByEmployeeType(employeeType) {
     const normalized = (employeeType || "").toString().trim().toLowerCase();
-    if (normalized.includes("usa")) {
+    if (EMPLOYEE_TYPE_TO_CURRENCY[normalized]) {
+        return EMPLOYEE_TYPE_TO_CURRENCY[normalized];
+    }
+    if (normalized.endsWith("_usa") || normalized.includes("usa")) {
         return "USD";
     }
-    return "INR";
+    if (normalized.endsWith("_india") || normalized.includes("india")) {
+        return "INR";
+    }
+    return DEFAULT_CURRENCY;
 }
 
 export function getCurrencyLocale(currency) {

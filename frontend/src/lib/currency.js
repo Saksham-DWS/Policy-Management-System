@@ -11,10 +11,9 @@ export const normalizeCurrency = (currency, fallback) =>
   normalizeSharedCurrency(currency, fallback);
 
 export const getUserCurrency = (user, fallback = "INR") =>
-  normalizeSharedCurrency(
-    user?.currency,
-    user?.employeeType ? getCurrencyByEmployeeType(user.employeeType) : normalizeSharedCurrency(fallback),
-  );
+  user?.employeeType
+    ? getCurrencyByEmployeeType(user.employeeType)
+    : normalizeSharedCurrency(user?.currency, normalizeSharedCurrency(fallback));
 
 export const formatCurrencyValue = (amount, currency, fallback = "INR") =>
   formatCurrencyAmount(amount, normalizeSharedCurrency(currency, fallback));

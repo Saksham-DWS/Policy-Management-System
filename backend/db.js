@@ -22,7 +22,18 @@ function normalizeEmailValue(email) {
     return typeof email === "string" ? email.trim().toLowerCase() : email;
 }
 function normalizeCurrencyValue(currency, employeeType) {
-    return normalizeCurrency(currency, getCurrencyByEmployeeType(normalizeEmployeeTypeValue(employeeType)));
+    const normalizedEmployeeType = normalizeEmployeeTypeValue(employeeType);
+    if (normalizedEmployeeType) {
+        return getCurrencyByEmployeeType(normalizedEmployeeType);
+    }
+    return normalizeCurrency(currency, DEFAULT_CURRENCY);
+}
+function buildSearchRegex(query) {
+    const normalized = (query || "").trim();
+    if (!normalized) {
+        return null;
+    }
+    return new RegExp(escapeRegex(normalized), "i");
 }
 function escapeRegex(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -357,9 +368,11 @@ function normalizeCreditRequestCurrency(request, userCurrencyMap) {
     if (!request) {
         return request;
     }
+    const userId = request.userId?.toString?.() || request.userId;
+    const authoritativeCurrency = userCurrencyMap.get(userId);
     return {
         ...request,
-        currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY),
+        currency: authoritativeCurrency || normalizeCurrency(request.currency, DEFAULT_CURRENCY),
     };
 }
 export async function getCreditRequestById(id) {
@@ -422,7 +435,7 @@ async function ensureWallet(userId) {
             updatedAt: new Date(),
         });
         wallet = created.toObject();
-    } else if (!wallet.currency) {
+    } else if (normalizeCurrency(wallet.currency, userCurrency) !== userCurrency) {
         await Wallet.findOneAndUpdate(
             { userId },
             { $set: { currency: userCurrency, updatedAt: new Date() } },
@@ -462,7 +475,7 @@ export async function getWalletTransactions(userId) {
     const transactions = await WalletTransaction.find({ userId }).sort({ createdAt: -1 }).lean();
     return transactions.map((transaction) => ({
         ...transaction,
-        currency: normalizeCurrency(transaction.currency, wallet.currency),
+        currency: normalizeCurrency(wallet.currency, DEFAULT_CURRENCY),
     }));
 }
 export async function getWalletTransactionById(id) {
@@ -474,7 +487,7 @@ export async function getWalletTransactionById(id) {
     const wallet = await ensureWallet(transaction.userId);
     return {
         ...transaction,
-        currency: normalizeCurrency(transaction.currency, wallet.currency),
+        currency: normalizeCurrency(wallet.currency, DEFAULT_CURRENCY),
     };
 }
 export async function updateWalletTransaction(id, updates) {
@@ -491,7 +504,7 @@ export async function getRedeemableCreditTransactions(userId) {
     }).sort({ createdAt: -1 }).lean();
     return transactions.map((transaction) => ({
         ...transaction,
-        currency: normalizeCurrency(transaction.currency, wallet.currency),
+        currency: normalizeCurrency(wallet.currency, DEFAULT_CURRENCY),
     }));
 }
 export async function getWalletTransactionsByUserIds(userIds) {
@@ -506,12 +519,10 @@ export async function getWalletTransactionsByUserIds(userIds) {
     );
     return transactions.map((transaction) => ({
         ...transaction,
-        currency: normalizeCurrency(
-            transaction.currency,
+        currency:
             walletCurrencyMap.get(transaction.userId) ||
-                userCurrencyMap.get(transaction.userId) ||
-                DEFAULT_CURRENCY,
-        ),
+            userCurrencyMap.get(transaction.userId) ||
+            normalizeCurrency(transaction.currency, DEFAULT_CURRENCY),
     }));
 }
 export async function getAllWalletTransactions() {
@@ -530,12 +541,10 @@ export async function getAllWalletTransactions() {
     );
     return transactions.map((transaction) => ({
         ...transaction,
-        currency: normalizeCurrency(
-            transaction.currency,
+        currency:
             walletCurrencyMap.get(transaction.userId) ||
-                userCurrencyMap.get(transaction.userId) ||
-                DEFAULT_CURRENCY,
-        ),
+            userCurrencyMap.get(transaction.userId) ||
+            normalizeCurrency(transaction.currency, DEFAULT_CURRENCY),
     }));
 }
 // ==================== NOTIFICATION OPERATIONS ====================
@@ -550,7 +559,13 @@ export async function getNotificationsByUserId(userId, limit = 50) {
 }
 export async function getUnreadNotificationCount(userId) {
     await ensureConnection();
-    return await Notification.countDocuments({ userId, readAt: { $exists: false } });
+    return await Notification.countDocuments({
+        userId,
+        $or: [
+            { readAt: { $exists: false } },
+            { readAt: null },
+        ],
+    });
 }
 export async function markNotificationRead(notificationId, userId) {
     await ensureConnection();
@@ -558,7 +573,16 @@ export async function markNotificationRead(notificationId, userId) {
 }
 export async function markAllNotificationsRead(userId) {
     await ensureConnection();
-    await Notification.updateMany({ userId, readAt: { $exists: false } }, { $set: { readAt: new Date() } });
+    await Notification.updateMany(
+        {
+            userId,
+            $or: [
+                { readAt: { $exists: false } },
+                { readAt: null },
+            ],
+        },
+        { $set: { readAt: new Date() } },
+    );
 }
 export async function getWalletSummary(userId) {
     await ensureConnection();
@@ -590,9 +614,11 @@ function normalizeRedemptionRequestCurrency(request, userCurrencyMap) {
     if (!request) {
         return request;
     }
+    const userId = request.userId?.toString?.() || request.userId;
+    const authoritativeCurrency = userCurrencyMap.get(userId);
     return {
         ...request,
-        currency: normalizeCurrency(request.currency, userCurrencyMap.get(request.userId) || DEFAULT_CURRENCY),
+        currency: authoritativeCurrency || normalizeCurrency(request.currency, DEFAULT_CURRENCY),
     };
 }
 export async function getRedemptionRequestById(id) {
@@ -631,6 +657,73 @@ export async function getRedemptionRequestsByStatus(status) {
 export async function updateRedemptionRequest(id, updates) {
     await ensureConnection();
     await RedemptionRequest.findByIdAndUpdate(id, { $set: updates });
+}
+
+export async function reconcileCurrencyForUser(userId) {
+    await ensureConnection();
+    const user = await User.findById(userId).select("_id employeeType currency").lean();
+    if (!user) {
+        return null;
+    }
+
+    const userIdString = user._id.toString();
+    const authoritativeCurrency = normalizeCurrencyValue(user.currency, user.employeeType);
+    const userCurrency = normalizeCurrency(user.currency, authoritativeCurrency);
+
+    if (userCurrency !== authoritativeCurrency) {
+        await User.findByIdAndUpdate(userIdString, { $set: { currency: authoritativeCurrency } });
+    }
+
+    const [walletResult, transactionsResult, creditsResult, redemptionsResult] = await Promise.all([
+        Wallet.updateOne(
+            { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+            { $set: { currency: authoritativeCurrency, updatedAt: new Date() } },
+        ),
+        WalletTransaction.updateMany(
+            { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+            { $set: { currency: authoritativeCurrency } },
+        ),
+        CreditRequest.updateMany(
+            { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+            { $set: { currency: authoritativeCurrency } },
+        ),
+        RedemptionRequest.updateMany(
+            { userId: userIdString, currency: { $ne: authoritativeCurrency } },
+            { $set: { currency: authoritativeCurrency } },
+        ),
+    ]);
+
+    return {
+        userId: userIdString,
+        currency: authoritativeCurrency,
+        userUpdated: userCurrency !== authoritativeCurrency,
+        walletUpdated: walletResult.modifiedCount || 0,
+        transactionsUpdated: transactionsResult.modifiedCount || 0,
+        creditsUpdated: creditsResult.modifiedCount || 0,
+        redemptionsUpdated: redemptionsResult.modifiedCount || 0,
+    };
+}
+
+export async function reconcileCurrencyForAllUsers() {
+    await ensureConnection();
+    const users = await User.find().select("_id").lean();
+    const results = [];
+    for (const user of users) {
+        const result = await reconcileCurrencyForUser(user._id.toString());
+        if (result) {
+            results.push(result);
+        }
+    }
+
+    return {
+        usersChecked: results.length,
+        usersUpdated: results.filter((entry) => entry.userUpdated).length,
+        walletsUpdated: results.reduce((sum, entry) => sum + entry.walletUpdated, 0),
+        transactionsUpdated: results.reduce((sum, entry) => sum + entry.transactionsUpdated, 0),
+        creditsUpdated: results.reduce((sum, entry) => sum + entry.creditsUpdated, 0),
+        redemptionsUpdated: results.reduce((sum, entry) => sum + entry.redemptionsUpdated, 0),
+        details: results,
+    };
 }
 // ==================== AUDIT LOG OPERATIONS ====================
 export async function createAuditLog(data) {
@@ -697,6 +790,95 @@ export async function getAllAccessGrants() {
 export async function getActiveAccessGrants(userId) {
     await ensureConnection();
     return await getUserAccess(userId);
+}
+// ==================== SEARCH OPERATIONS ====================
+export async function searchUsers(query, options = {}) {
+    await ensureConnection();
+    const regex = buildSearchRegex(query);
+    if (!regex) {
+        return [];
+    }
+    const limit = Math.min(Math.max(Number(options.limit) || 8, 1), 25);
+    const searchQuery = {
+        $or: [
+            { name: regex },
+            { email: regex },
+            { role: regex },
+            { employeeType: regex },
+        ],
+    };
+    if (options.userIds?.length) {
+        searchQuery._id = { $in: options.userIds };
+    }
+    if (options.hodId) {
+        searchQuery.$and = [
+            { $or: [{ _id: options.hodId }, { hodId: options.hodId }] },
+        ];
+    }
+    if (options.roles?.length) {
+        const expandedRoles = Array.from(
+            new Set(options.roles.flatMap((role) => expandRoleFilter(role))),
+        );
+        searchQuery.role = { $in: expandedRoles };
+    }
+    const users = await User.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+    return normalizeUserList(users);
+}
+export async function searchPolicies(query, options = {}) {
+    await ensureConnection();
+    const regex = buildSearchRegex(query);
+    if (!regex) {
+        return [];
+    }
+    const limit = Math.min(Math.max(Number(options.limit) || 8, 1), 25);
+    const searchQuery = {
+        $or: [
+            { name: regex },
+            { description: regex },
+            { eligibilityCriteria: regex },
+            { calculationLogic: regex },
+            { status: regex },
+        ],
+    };
+    if (options.createdBy) {
+        searchQuery.createdBy = options.createdBy;
+    }
+    if (options.statuses?.length) {
+        searchQuery.status = { $in: options.statuses };
+    }
+    return await Policy.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+}
+export async function searchCreditRequests(query, options = {}) {
+    await ensureConnection();
+    const regex = buildSearchRegex(query);
+    if (!regex) {
+        return [];
+    }
+    const limit = Math.min(Math.max(Number(options.limit) || 10, 1), 30);
+    const searchQuery = {
+        $or: [
+            { type: regex },
+            { status: regex },
+            { notes: regex },
+            { calculationBreakdown: regex },
+            { currency: regex },
+        ],
+    };
+    if (options.userIds?.length) {
+        searchQuery.userId = { $in: options.userIds };
+    }
+    if (options.hodId) {
+        searchQuery.hodId = options.hodId;
+    }
+    if (options.initiatorId) {
+        searchQuery.initiatorId = options.initiatorId;
+    }
+    if (options.statuses?.length) {
+        searchQuery.status = { $in: options.statuses };
+    }
+    const requests = await CreditRequest.find(searchQuery).sort({ createdAt: -1 }).limit(limit).lean();
+    const userCurrencyMap = await resolveCurrencyByUserIds(requests.map((request) => request.userId));
+    return requests.map((request) => normalizeCreditRequestCurrency(request, userCurrencyMap));
 }
 // ==================== DASHBOARD & REPORTS ====================
 export async function getDashboardStats(userId, role) {

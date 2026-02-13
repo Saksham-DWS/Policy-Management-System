@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { PageHeader, PageShell, KpiCard } from "@/components/layout/PageLayout";
 
 export default function Reports() {
   const { data, isLoading } = api.reports.getOverview.useQuery({ months: 6 });
@@ -27,66 +28,20 @@ export default function Reports() {
   };
  
   return (
-    <div className="space-y-6 p-6">
-      <h1 className="text-3xl font-bold">Reports & Analytics</h1>
+    <PageShell>
+      <PageHeader
+        title="Reports & Analytics"
+        description="Credit and redemption performance over the last 6 months"
+      />
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Credits (USD)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalCreditsByCurrency?.USD || 0, "USD")}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Credits (INR)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalCreditsByCurrency?.INR || 0, "INR")}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Redemptions (USD)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalRedemptionsByCurrency?.USD || 0, "USD")}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Redemptions (INR)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{formatCurrencyValue(totals.totalRedemptionsByCurrency?.INR || 0, "INR")}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Pending Approvals</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{totals.pendingApprovals}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Pending Signatures</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{totals.pendingSignatures}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm text-muted-foreground">Pending Redemptions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-semibold">{totals.pendingRedemptions}</p>
-          </CardContent>
-        </Card>
+        <KpiCard title="Credits (USD)" value={formatCurrencyValue(totals.totalCreditsByCurrency?.USD || 0, "USD")} />
+        <KpiCard title="Credits (INR)" value={formatCurrencyValue(totals.totalCreditsByCurrency?.INR || 0, "INR")} />
+        <KpiCard title="Redemptions (USD)" value={formatCurrencyValue(totals.totalRedemptionsByCurrency?.USD || 0, "USD")} />
+        <KpiCard title="Redemptions (INR)" value={formatCurrencyValue(totals.totalRedemptionsByCurrency?.INR || 0, "INR")} />
+        <KpiCard title="Pending Approvals" value={totals.pendingApprovals} />
+        <KpiCard title="Pending Signatures" value={totals.pendingSignatures} />
+        <KpiCard title="Pending Redemptions" value={totals.pendingRedemptions} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -192,6 +147,6 @@ export default function Reports() {
           </CardContent>
         </Card>
       </div>
-    </div>
+    </PageShell>
   );
 }

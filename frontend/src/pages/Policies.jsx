@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Loader2, Plus, Pencil, Trash2, FileText, CheckCircle2, Archive } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { PageShell } from "@/components/layout/PageLayout";
 export default function Policies() {
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingPolicy, setEditingPolicy] = useState(null);
@@ -154,7 +155,7 @@ export default function Policies() {
         };
         return colors[status] || colors.draft;
     };
-    return (<div className="space-y-6 p-6">
+    return (<PageShell>
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Policy Management</h1>
@@ -301,7 +302,7 @@ export default function Policies() {
                 Create Policy
               </Button>
             </div>) : (<div className="space-y-4">
-              {policies.map((policy) => (<div key={policy._id?.toString()} className="border rounded-lg p-4 hover:bg-gray-100 transition-colors">
+              {policies.map((policy) => (<div key={policy._id?.toString()} className="border rounded-lg p-4 hover:bg-muted/40 transition-colors">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
@@ -360,7 +361,6 @@ export default function Policies() {
             </div>)}
         </CardContent>
       </Card>
-    </div>);
+    </PageShell>);
 }
-
 

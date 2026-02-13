@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, User, Mail, Shield, Briefcase, Calendar, DollarSign } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getUserCurrency } from "@/lib/currency";
+import { PageShell } from "@/components/layout/PageLayout";
 
 const roleLabel = (role) => {
   switch (role) {
@@ -49,7 +50,7 @@ export default function Profile() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <PageShell>
       <div>
         <h1 className="text-3xl font-bold tracking-tight">My Profile</h1>
         <p className="text-muted-foreground mt-1">View your account and role details</p>
@@ -133,6 +134,6 @@ export default function Profile() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

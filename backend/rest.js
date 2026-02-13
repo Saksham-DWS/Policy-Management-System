@@ -77,8 +77,7 @@ const creditRequestUpload = multer({
 });
 
 const normalizeEmployeeType = (type) => (type === "permanent" ? "permanent_india" : type);
-const getUserCurrency = (user) =>
-    normalizeCurrency(user?.currency, getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType)));
+const getUserCurrency = (user) => getCurrencyByEmployeeType(normalizeEmployeeType(user?.employeeType));
 const formatMoney = (amount, currency) => formatCurrencyAmount(amount, normalizeCurrency(currency));
 
 const asyncHandler = (handler) => (req, res, next) => {
@@ -220,10 +219,7 @@ async function hydrateCreditRequests(requests) {
         initiator: userMap.get(request.initiatorId) || null,
         hod: request.hodId ? userMap.get(request.hodId) || null : null,
         policy: request.policyId ? policyMap.get(request.policyId) || null : null,
-        currency: normalizeCurrency(
-            request.currency,
-            getUserCurrency(userMap.get(request.userId) || null),
-        ),
+        currency: getUserCurrency(userMap.get(request.userId) || null),
     }));
 }
 
@@ -237,10 +233,7 @@ async function hydrateRedemptionRequests(requests) {
     return requests.map((request) => ({
         ...request,
         user: userMap.get(request.userId) || null,
-        currency: normalizeCurrency(
-            request.currency,
-            getUserCurrency(userMap.get(request.userId) || null),
-        ),
+        currency: getUserCurrency(userMap.get(request.userId) || null),
     }));
 }
 
@@ -506,6 +499,7 @@ export function createRestRouter() {
             if (input.role === "admin") {
                 await db.updateUser(user._id.toString(), { hodId: user._id.toString() });
             }
+            await db.reconcileCurrencyForUser(user._id.toString());
             if (normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
                 await db.setEmployeeInitiators(user._id.toString(), freelancerInitiatorIds, ctxUser.id);
             }
@@ -594,6 +588,7 @@ export function createRestRouter() {
                 updates.employeeType = normalizedEmployeeType;
             }
             await db.updateUser(id, updates);
+            await db.reconcileCurrencyForUser(id);
             if (normalizedEmployeeType && normalizedEmployeeType.startsWith("freelancer") && freelancerInitiatorIds?.length) {
                 await db.setEmployeeInitiators(id, freelancerInitiatorIds, ctxUser.id);
             }
@@ -622,6 +617,39 @@ export function createRestRouter() {
                 entityId: input.id,
             });
             res.json({ success: true });
+        }),
+    );
+
+    router.post(
+        "/admin/currency/reconcile",
+        asyncHandler(async (req, res) => {
+            const ctxUser = requireRole(req, ["admin"], "Admin access required");
+            const input = parseInput(
+                z.object({
+                    userId: z.string().optional(),
+                }),
+                req.body ?? {},
+            );
+
+            const result = input.userId
+                ? await db.reconcileCurrencyForUser(input.userId)
+                : await db.reconcileCurrencyForAllUsers();
+            if (input.userId && !result) {
+                throw NotFoundError("User not found");
+            }
+
+            await db.createAuditLog({
+                userId: ctxUser.id,
+                action: "currency_reconciled",
+                entityType: "currency",
+                entityId: input.userId || "all",
+                details: JSON.stringify({
+                    scope: input.userId ? "user" : "all",
+                    userId: input.userId || null,
+                }),
+            });
+
+            res.json({ success: true, result });
         }),
     );
 
@@ -1867,7 +1895,15 @@ export function createRestRouter() {
                 throw BadRequestError("Selected credit has already been redeemed.");
             }
             const amount = Number(creditTxn.amount || 0);
-            const redemptionCurrency = normalizeCurrency(creditTxn.currency, getUserCurrency(ctxUser));
+            await db.reconcileCurrencyForUser(ctxUser.id.toString());
+            const dbUser = await db.getUserById(ctxUser.id.toString());
+            const redemptionCurrency = getUserCurrency(dbUser || ctxUser);
+            const creditCurrency = normalizeCurrency(creditTxn.currency, redemptionCurrency);
+            if (creditCurrency !== redemptionCurrency) {
+                throw BadRequestError(
+                    `Currency mismatch found for this credit. Expected ${redemptionCurrency}. Please refresh and try again.`,
+                );
+            }
             const balanceBefore = await db.getWalletBalance(ctxUser.id.toString());
             if (balanceBefore < amount) {
                 throw BadRequestError("Insufficient balance");
@@ -2021,13 +2057,18 @@ export function createRestRouter() {
             if (!request) {
                 throw NotFoundError("Not found");
             }
-            const employee = await db.getUserById(request.userId?.toString?.() || request.userId);
-            const expectedCurrency = normalizeCurrency(request.currency, getUserCurrency(employee));
+            const employeeId = request.userId?.toString?.() || request.userId;
+            await db.reconcileCurrencyForUser(employeeId);
+            const employee = await db.getUserById(employeeId);
+            const expectedCurrency = getUserCurrency(employee);
             const processedCurrency = normalizeCurrency(input.paymentCurrency, expectedCurrency);
             if (processedCurrency !== expectedCurrency) {
                 throw BadRequestError(
                     `Payment currency mismatch. This request must be processed in ${expectedCurrency}.`,
                 );
+            }
+            if (normalizeCurrency(request.currency, expectedCurrency) !== expectedCurrency) {
+                await db.updateRedemptionRequest(input.requestId, { currency: expectedCurrency });
             }
             const timelineLog = appendTimelineEntry(
                 request.timelineLog,
@@ -2431,6 +2472,124 @@ export function createRestRouter() {
                     pendingRedemptions: 0,
                 });
             }
+        }),
+    );
+
+    // ==================== GLOBAL SEARCH ====================
+    router.get(
+        "/search/global",
+        asyncHandler(async (req, res) => {
+            const ctxUser = requireAuth(req);
+            const input = parseInput(
+                z.object({
+                    q: z.string().trim().min(2, "Enter at least 2 characters"),
+                    limit: z.coerce.number().min(1).max(12).optional(),
+                }),
+                req.query,
+            );
+            const limit = input.limit ?? 6;
+            const query = input.q.trim();
+
+            const dedupeById = (items) => {
+                const seen = new Set();
+                return items.filter((item) => {
+                    const id = item?._id?.toString?.() || item?.id;
+                    if (!id || seen.has(id)) {
+                        return false;
+                    }
+                    seen.add(id);
+                    return true;
+                });
+            };
+
+            let users = [];
+            let policies = [];
+            let requests = [];
+
+            if (ctxUser.role === "admin") {
+                [users, policies, requests] = await Promise.all([
+                    db.searchUsers(query, { limit }),
+                    db.searchPolicies(query, { limit }),
+                    db.searchCreditRequests(query, { limit: limit * 2 }),
+                ]);
+            } else if (ctxUser.role === "hod") {
+                [users, policies, requests] = await Promise.all([
+                    db.searchUsers(query, { limit, hodId: ctxUser.id }),
+                    db.searchPolicies(query, { limit }),
+                    db.searchCreditRequests(query, { limit: limit * 2, hodId: ctxUser.id }),
+                ]);
+            } else if (ctxUser.role === "employee") {
+                const [myRequests, initiatedRequests, policyLinks] = await Promise.all([
+                    db.searchCreditRequests(query, { limit: limit * 2, userIds: [ctxUser.id] }),
+                    db.searchCreditRequests(query, { limit: limit * 2, initiatorId: ctxUser.id }),
+                    db.getEmployeePolicyAssignmentsByUserId(ctxUser.id),
+                ]);
+                users = await db.searchUsers(query, { limit, userIds: [ctxUser.id] });
+                const policyIds = Array.from(
+                    new Set((policyLinks || []).map((assignment) => assignment.policyId).filter(Boolean)),
+                );
+                if (policyIds.length > 0) {
+                    const assignedPolicies = await db.getPoliciesByIds(policyIds);
+                    const q = query.toLowerCase();
+                    policies = assignedPolicies
+                        .filter((policy) => {
+                            const hay = `${policy.name || ""} ${policy.description || ""} ${policy.status || ""}`.toLowerCase();
+                            return hay.includes(q);
+                        })
+                        .slice(0, limit);
+                }
+                requests = dedupeById([...(myRequests || []), ...(initiatedRequests || [])]).slice(0, limit * 2);
+            } else {
+                users = await db.searchUsers(query, { limit, userIds: [ctxUser.id] });
+                policies = await db.searchPolicies(query, { limit, statuses: ["active"] });
+                requests = await db.searchCreditRequests(query, { limit: limit * 2, statuses: ["approved"] });
+            }
+
+            const hydratedRequests = await hydrateCreditRequests(requests);
+            const requestSummaries = hydratedRequests.slice(0, limit * 2).map((request) => ({
+                id: request._id?.toString(),
+                label:
+                    request.type === "policy"
+                        ? request.policy?.name || "Policy request"
+                        : "Freelancer request",
+                subtitle: `${request.user?.name || "Unknown user"} • ${request.status}`,
+                amount: request.amount,
+                currency: request.currency,
+                status: request.status,
+                type: request.type,
+                route:
+                    request.status === "pending_approval" || request.status === "pending_employee_approval"
+                        ? "/approvals"
+                        : "/transactions",
+            }));
+
+            const userSummaries = users.slice(0, limit).map((user) => ({
+                id: user._id?.toString(),
+                label: user.name || user.email,
+                subtitle: `${user.email} • ${user.role}`,
+                role: user.role,
+                route: user._id?.toString() === ctxUser.id ? "/profile" : "/user-management",
+            }));
+
+            const policySummaries = policies.slice(0, limit).map((policy) => ({
+                id: policy._id?.toString(),
+                label: policy.name,
+                subtitle: policy.status || "draft",
+                status: policy.status,
+                route: "/policies",
+            }));
+
+            res.json({
+                query,
+                users: userSummaries,
+                policies: policySummaries,
+                requests: requestSummaries,
+                counts: {
+                    users: userSummaries.length,
+                    policies: policySummaries.length,
+                    requests: requestSummaries.length,
+                },
+            });
         }),
     );
 
