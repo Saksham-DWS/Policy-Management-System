@@ -60,20 +60,20 @@ export default function Login() {
 
           <div className="mt-[120px] max-w-[680px]">
             <h1 className="text-[56px] font-semibold leading-[1.06] tracking-[-0.02em]">
-              Inventory
+              Policy
               <br />
               Management System
             </h1>
 
             <p className="mt-7 max-w-[620px] text-[16px] leading-[1.55] text-white/80">
-              Welcome to our inventory system. Use this space to manage assets, submit and track requests, and get a
-              clear view of inventory across the company.
+              Welcome to our policy management system. Use this space to manage policies, submit and track requests,
+              and get a clear view of policies across the company.
             </p>
 
             <div className="mt-10">
               <h2 className="text-[36px] font-semibold leading-none tracking-[-0.01em]">DWSG since 2005</h2>
               <p className="mt-2 text-[14px] leading-[1.6] text-white/70">
-                Crafting reliable inventory experiences across industries.
+                Crafting reliable policy experiences across industries.
               </p>
             </div>
           </div>
