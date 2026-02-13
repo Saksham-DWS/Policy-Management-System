@@ -3,11 +3,13 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +20,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getUserCurrency } from "@/lib/currency";
 import { KpiCard, PageHeader, PageShell } from "@/components/layout/PageLayout";
   
+const EMPLOYEE_CARD_GRID_CLASS = "grid auto-rows-fr grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3";
+
 const employeeTypeLabel = (type) => {
   switch (type) {
     case "permanent_india":
@@ -64,6 +68,7 @@ export default function EmployeeManagement() {
     initiatorIds: [],
     effectiveDate: "",
   });
+  const [initiatorSearchQuery, setInitiatorSearchQuery] = useState("");
   const [formData, setFormData] = useState({
     employeeType: "permanent_india",
     hodId: "",
@@ -94,6 +99,7 @@ export default function EmployeeManagement() {
     onSuccess: () => {
       toast.success("Policy assigned successfully");
       setAssignmentForm({ policyId: "", initiatorIds: [], effectiveDate: "" });
+      setInitiatorSearchQuery("");
       refetch();
     },
     onError: (error) => {
@@ -146,6 +152,25 @@ export default function EmployeeManagement() {
   const selectedUsers = useMemo(
     () => selectedUserIds.map((id) => usersById.get(id)).filter(Boolean),
     [selectedUserIds, usersById],
+  );
+  const filteredInitiatorOptions = useMemo(() => {
+    const query = initiatorSearchQuery.trim().toLowerCase();
+    const sorted = [...initiatorOptions].sort((left, right) => {
+      const leftValue = (left?.name || left?.email || "").toLowerCase();
+      const rightValue = (right?.name || right?.email || "").toLowerCase();
+      return leftValue.localeCompare(rightValue);
+    });
+    if (!query) {
+      return sorted;
+    }
+    return sorted.filter((entry) => {
+      const searchable = `${entry?.name || ""} ${entry?.email || ""} ${entry?.role || ""}`.toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [initiatorOptions, initiatorSearchQuery]);
+  const selectedInitiatorUsers = useMemo(
+    () => assignmentForm.initiatorIds.map((id) => usersById.get(id)).filter(Boolean),
+    [assignmentForm.initiatorIds, usersById],
   );
   const getInitiatorNames = (employee) => {
     if (!employee?.employeeType?.startsWith("freelancer")) {
@@ -302,6 +327,16 @@ export default function EmployeeManagement() {
       initiatorIds: prev.initiatorIds.includes(initiatorId)
         ? prev.initiatorIds.filter((id) => id !== initiatorId)
         : [...prev.initiatorIds, initiatorId],
+    }));
+  };
+  const clearPolicyInitiators = () => {
+    setAssignmentForm((prev) => ({ ...prev, initiatorIds: [] }));
+  };
+  const selectAllVisiblePolicyInitiators = () => {
+    const visibleIds = filteredInitiatorOptions.map((entry) => entry._id.toString());
+    setAssignmentForm((prev) => ({
+      ...prev,
+      initiatorIds: Array.from(new Set([...prev.initiatorIds, ...visibleIds])),
     }));
   };
 
@@ -477,6 +512,7 @@ export default function EmployeeManagement() {
   const openAssignmentDrawer = (employee) => {
     setSelectedEmployee(employee);
     setAssignmentForm({ policyId: "", initiatorIds: [], effectiveDate: "" });
+    setInitiatorSearchQuery("");
   };
 
   const handleDialogClose = (open) => {
@@ -801,7 +837,7 @@ export default function EmployeeManagement() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(330px,1fr))] gap-6">
+        <div className={EMPLOYEE_CARD_GRID_CLASS}>
           {filteredEmployees.map((employee) => {
             const initiatablePolicyAssignments = getInitiatablePolicyAssignments(employee);
             const canInitiate = canInitiateForEmployee(employee);
@@ -814,6 +850,9 @@ export default function EmployeeManagement() {
               .filter(Boolean)
               .join(", ");
             const policyInitiatorsText = getPolicyInitiatorNames(employee).join(", ");
+            const selectedPolicyName =
+              activePolicies.find((policy) => policy._id.toString() === assignmentForm.policyId)?.name || "";
+            const canSubmitPolicyAssignment = Boolean(assignmentForm.policyId) && assignmentForm.initiatorIds.length > 0;
 
             return (
             <Card key={employee._id.toString()} className="card-hover h-[460px] overflow-hidden border-border/80">
@@ -860,6 +899,7 @@ export default function EmployeeManagement() {
                           if (!open) {
                             setSelectedEmployee(null);
                             setAssignmentForm({ policyId: "", initiatorIds: [], effectiveDate: "" });
+                            setInitiatorSearchQuery("");
                           }
                         }}
                       >
@@ -873,105 +913,244 @@ export default function EmployeeManagement() {
                             <Settings2 className="h-4 w-4" />
                           </Button>
                         </SheetTrigger>
-                        <SheetContent className="w-105 sm:w-140 overflow-y-auto">
-                        <SheetHeader>
-                          <SheetTitle>Assign Policy to {employee.name}</SheetTitle>
-                        </SheetHeader>
-                        <div className="mt-6 space-y-6">
-                          <div className="space-y-2">
-                            <Label>Select Policy</Label>
-                            <Select
-                              value={assignmentForm.policyId}
-                              onValueChange={(value) => setAssignmentForm((prev) => ({ ...prev, policyId: value }))}
-                            >
-                              <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Choose a policy" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {activePolicies.map((policy) => (
-                                  <SelectItem key={policy._id.toString()} value={policy._id.toString()}>
-                                    {policy.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label>Effective Date</Label>
-                            <Input
-                              type="date"
-                              value={assignmentForm.effectiveDate}
-                              onChange={(e) => setAssignmentForm((prev) => ({ ...prev, effectiveDate: e.target.value }))}
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label>Select Initiators</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Choose who can initiate requests for this policy.
-                            </p>
-                            <div className="max-h-48 overflow-y-auto rounded-md border bg-background p-3 space-y-2">
-                              {initiatorOptions.map((user) => (
-                                <div key={user._id.toString()} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`policy-init-${user._id.toString()}`}
-                                    checked={assignmentForm.initiatorIds.includes(user._id.toString())}
-                                    onCheckedChange={() => togglePolicyInitiator(user._id.toString())}
-                                  />
-                                  <label htmlFor={`policy-init-${user._id.toString()}`} className="text-sm cursor-pointer">
-                                    {user.name || user.email} ({user.role})
-                                  </label>
-                                </div>
-                              ))}
+                        <SheetContent className="w-full p-0 sm:max-w-[620px]">
+                          <SheetHeader className="border-b px-6 py-5">
+                            <SheetTitle className="text-xl">Assign Policy</SheetTitle>
+                            <SheetDescription>
+                              {employee.name || "Unnamed"} ({employee.email || "-"})
+                            </SheetDescription>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
+                                {employeeTypeLabel(employee.employeeType)}
+                              </Badge>
+                              <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                                {(employee.policyAssignments || []).length} Current Assignments
+                              </Badge>
                             </div>
-                          </div>
+                          </SheetHeader>
 
-                          <Button onClick={handleAssignPolicy} disabled={assignPolicy.isPending} className="w-full">
-                            {assignPolicy.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                            Assign Policy
-                          </Button>
-
-                          {employee.policyAssignments && employee.policyAssignments.length > 0 && (
-                            <div className="mt-6 pt-6 border-t">
-                              <h4 className="font-semibold mb-3">Current Assignments</h4>
-                              <div className="space-y-3">
-                                {employee.policyAssignments.map((assignment) => (
-                                  <div key={assignment._id.toString()} className="border rounded-lg p-3">
-                                    <div className="flex items-start justify-between mb-2">
-                                      <div>
-                                        <p className="font-medium text-sm">{assignment.policy?.name || "Policy"}</p>
-                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                                          <Calendar className="w-3 h-3" />
-                                          {assignment.effectiveDate
-                                            ? new Date(assignment.effectiveDate).toLocaleDateString()
-                                            : "-"}
-                                        </p>
-                                      </div>
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        onClick={() => handleRemoveAssignment(assignment._id.toString())}
-                                        className="text-destructive hover:text-destructive"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </Button>
-                                    </div>
-                                    {assignment.initiators && assignment.initiators.length > 0 && (
-                                      <div className="flex flex-wrap gap-1 mt-2">
-                                        {assignment.initiators.map((init) => (
-                                          <Badge key={init._id.toString()} variant="outline" className="text-xs">
-                                            {init.name}
-                                          </Badge>
+                          <div className="flex min-h-0 flex-1 flex-col">
+                            <ScrollArea className="flex-1">
+                              <div className="space-y-6 px-6 py-5">
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                  <div className="space-y-2">
+                                    <Label>Select Policy</Label>
+                                    <Select
+                                      value={assignmentForm.policyId}
+                                      onValueChange={(value) =>
+                                        setAssignmentForm((prev) => ({ ...prev, policyId: value }))
+                                      }
+                                    >
+                                      <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Choose a policy" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {activePolicies.map((policy) => (
+                                          <SelectItem key={policy._id.toString()} value={policy._id.toString()}>
+                                            {policy.name}
+                                          </SelectItem>
                                         ))}
-                                      </div>
-                                    )}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
-                                ))}
+
+                                  <div className="space-y-2">
+                                    <Label>Effective Date</Label>
+                                    <Input
+                                      type="date"
+                                      value={assignmentForm.effectiveDate}
+                                      onChange={(e) =>
+                                        setAssignmentForm((prev) => ({ ...prev, effectiveDate: e.target.value }))
+                                      }
+                                    />
+                                  </div>
+                                </div>
+
+                                <Separator />
+
+                                <div className="space-y-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="space-y-1">
+                                      <Label>Policy Initiators</Label>
+                                      <p className="text-xs text-muted-foreground">
+                                        Choose who can initiate requests for this policy.
+                                      </p>
+                                    </div>
+                                    <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                                      {assignmentForm.initiatorIds.length} Selected
+                                    </Badge>
+                                  </div>
+
+                                  <div className="relative">
+                                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                    <Input
+                                      value={initiatorSearchQuery}
+                                      onChange={(event) => setInitiatorSearchQuery(event.target.value)}
+                                      placeholder="Search initiator by name, email, or role"
+                                      className="pl-9"
+                                    />
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={selectAllVisiblePolicyInitiators}
+                                      disabled={filteredInitiatorOptions.length === 0}
+                                    >
+                                      Select Visible
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={clearPolicyInitiators}
+                                      disabled={assignmentForm.initiatorIds.length === 0}
+                                    >
+                                      Clear Selection
+                                    </Button>
+                                  </div>
+
+                                  {selectedInitiatorUsers.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {selectedInitiatorUsers.map((selectedInit) => (
+                                        <Badge
+                                          key={selectedInit._id.toString()}
+                                          variant="outline"
+                                          className="max-w-full rounded-full px-3 py-1 text-xs"
+                                        >
+                                          <span className="truncate">{selectedInit.name || selectedInit.email}</span>
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <div className="overflow-hidden rounded-xl border">
+                                    <ScrollArea className="h-[280px]">
+                                      <div className="space-y-1 p-2">
+                                        {filteredInitiatorOptions.length === 0 ? (
+                                          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                                            No initiators match your search.
+                                          </p>
+                                        ) : (
+                                          filteredInitiatorOptions.map((initiatorUser) => {
+                                            const initiatorId = initiatorUser._id.toString();
+                                            const isChecked = assignmentForm.initiatorIds.includes(initiatorId);
+                                            const roleLabel = (initiatorUser.role || "")
+                                              .replace(/_/g, " ")
+                                              .replace(/\b\w/g, (match) => match.toUpperCase());
+
+                                            return (
+                                              <label
+                                                key={initiatorId}
+                                                htmlFor={`policy-init-${employee._id.toString()}-${initiatorId}`}
+                                                className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/55"
+                                              >
+                                                <Checkbox
+                                                  id={`policy-init-${employee._id.toString()}-${initiatorId}`}
+                                                  checked={isChecked}
+                                                  onCheckedChange={() => togglePolicyInitiator(initiatorId)}
+                                                />
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="truncate text-sm font-medium">
+                                                    {initiatorUser.name || initiatorUser.email}
+                                                  </p>
+                                                  <p className="truncate text-xs text-muted-foreground">
+                                                    {initiatorUser.email || "-"}
+                                                  </p>
+                                                </div>
+                                                <Badge variant="outline" className="rounded-full px-2.5 py-1 text-[11px]">
+                                                  {roleLabel}
+                                                </Badge>
+                                              </label>
+                                            );
+                                          })
+                                        )}
+                                      </div>
+                                    </ScrollArea>
+                                  </div>
+                                </div>
+
+                                <Separator />
+
+                                <div className="space-y-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <h4 className="text-base font-semibold">Current Assignments</h4>
+                                    <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                                      {(employee.policyAssignments || []).length}
+                                    </Badge>
+                                  </div>
+
+                                  {employee.policyAssignments && employee.policyAssignments.length > 0 ? (
+                                    <div className="space-y-3">
+                                      {employee.policyAssignments.map((assignment) => (
+                                        <div key={assignment._id.toString()} className="rounded-xl border bg-card/50 p-3">
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                              <p className="truncate text-sm font-semibold">
+                                                {assignment.policy?.name || "Policy"}
+                                              </p>
+                                              <p className="mt-1 text-xs text-muted-foreground">
+                                                Effective date:{" "}
+                                                {assignment.effectiveDate
+                                                  ? new Date(assignment.effectiveDate).toLocaleDateString()
+                                                  : "-"}
+                                              </p>
+                                            </div>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => handleRemoveAssignment(assignment._id.toString())}
+                                              className="text-destructive hover:text-destructive"
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                          </div>
+
+                                          {assignment.initiators && assignment.initiators.length > 0 && (
+                                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                              {assignment.initiators.map((init) => (
+                                                <Badge key={init._id.toString()} variant="outline" className="text-xs">
+                                                  {init.name || init.email}
+                                                </Badge>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                                      No policy assignments yet for this user.
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+                            </ScrollArea>
+
+                            <div className="border-t bg-background/95 px-6 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+                              <div className="mb-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                                <span>
+                                  Policy: <span className="font-medium text-foreground">{selectedPolicyName || "Not selected"}</span>
+                                </span>
+                                <span>
+                                  Initiators:{" "}
+                                  <span className="font-medium text-foreground">{assignmentForm.initiatorIds.length}</span>
+                                </span>
+                              </div>
+                              <Button
+                                type="button"
+                                onClick={handleAssignPolicy}
+                                disabled={assignPolicy.isPending || !canSubmitPolicyAssignment}
+                                className="h-10 w-full"
+                              >
+                                {assignPolicy.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Assign Policy
+                              </Button>
                             </div>
-                          )}
-                        </div>
+                          </div>
                         </SheetContent>
                       </Sheet>
                     </div>

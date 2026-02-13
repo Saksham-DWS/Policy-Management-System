@@ -3094,37 +3094,6 @@ function createRestRouter() {
         } catch (error) {
           console.warn("[Email] Failed to send HOD policy email:", error?.message || error);
         }
-        try {
-          const admins = await getUsersByRole("admin");
-          await Promise.all(
-            admins.map(
-              (admin) => createNotification({
-                userId: admin._id.toString(),
-                title: "Policy request pending approval",
-                message: `${user.name || user.email} has a ${formatMoney2(input.amount, requestCurrency)} policy request${policyForEmail?.name ? ` (${policyForEmail.name})` : ""} awaiting approval.`,
-                type: "action",
-                actionUrl: "/approvals"
-              })
-            )
-          );
-          await Promise.all(
-            admins.map(
-              (admin) => sendHodFreelancerRequestEmail({
-                to: admin.email,
-                hodName: admin.name,
-                employee: user,
-                initiator: ctxUser,
-                amount: input.amount,
-                currency: requestCurrency,
-                details: policyForEmail?.name ? `Policy: ${policyForEmail.name}${input.notes ? ` | ${input.notes}` : ""}` : input.notes,
-                attachments: input.attachments || [],
-                requestType: "policy"
-              })
-            )
-          );
-        } catch (error) {
-          console.warn("[Email] Failed to notify admins for policy request:", error?.message || error);
-        }
       }
       if (input.type === "policy" && !isAdminOrHod) {
         res.json({ success: true, message: "Policy request created and sent to HOD for approval." });

@@ -33,14 +33,13 @@ import {
   LayoutDashboard,
   LogOut,
   PanelLeft,
-  Search,
   Settings,
   Shield,
   User,
   Users,
   Wallet,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import GlobalSearchCommand from "./GlobalSearchCommand";
@@ -129,7 +128,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }) {
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const [isResizing, setIsResizing] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchFocusRequested, setSearchFocusRequested] = useState(false);
   const sidebarRef = useRef(null);
   const isMobile = useIsMobile();
 
@@ -155,7 +154,37 @@ function DashboardLayoutContent({ children, setSidebarWidth }) {
     showEmployeeManagement: canSeeEmployeeManagement,
     showEmployeeApprovals: canSeeEmployeeApprovals,
   });
+  const globalSearchConfig = useMemo(() => {
+    if (user?.role === "admin" || user?.role === "hod") {
+      return {
+        placeholderParts: ["users", "policies", "requests"],
+        showSections: { users: true, policies: true, requests: true },
+      };
+    }
+    if (user?.role === "account") {
+      return {
+        placeholderParts: ["users", "policies", "approved requests"],
+        showSections: { users: true, policies: true, requests: true },
+      };
+    }
+    if (user?.role === "employee") {
+      return {
+        placeholderParts: canSeeEmployeeManagement
+          ? ["employees", "policies", "requests"]
+          : ["policies", "requests"],
+        showSections: {
+          users: canSeeEmployeeManagement,
+          policies: true,
+          requests: true,
+        },
+      };
+    }
 
+    return {
+      placeholderParts: ["policies", "requests"],
+      showSections: { users: false, policies: true, requests: true },
+    };
+  }, [canSeeEmployeeManagement, user?.role]);
   useEffect(() => {
     if (isCollapsed) {
       setIsResizing(false);
@@ -195,7 +224,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }) {
     const handleKeyDown = (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen((prev) => !prev);
+        setSearchFocusRequested(true);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -289,19 +318,13 @@ function DashboardLayoutContent({ children, setSidebarWidth }) {
               {isMobile ? (
                 <SidebarTrigger className="h-9 w-9 rounded-lg border border-border/70 bg-card" />
               ) : null}
-              <button
-                onClick={() => setSearchOpen(true)}
-                className="inline-flex h-10 w-full max-w-xl items-center gap-2 rounded-xl border border-border/70 bg-card px-3 text-left shadow-sm transition-colors hover:bg-accent/40"
-                aria-label="Open global search"
-              >
-                <Search className="h-4 w-4 text-muted-foreground" />
-                <span className="truncate text-sm text-muted-foreground">
-                  Search groups, projects, tasks...
-                </span>
-                <span className="ml-auto hidden rounded border border-border/70 bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground md:inline-flex">
-                  Ctrl+K
-                </span>
-              </button>
+              <GlobalSearchCommand
+                open={searchFocusRequested}
+                onOpenChange={setSearchFocusRequested}
+                placeholderParts={globalSearchConfig.placeholderParts}
+                showSections={globalSearchConfig.showSections}
+                className="w-full max-w-xl"
+              />
             </div>
 
             <div className="flex items-center gap-1.5 md:gap-2">
@@ -363,7 +386,6 @@ function DashboardLayoutContent({ children, setSidebarWidth }) {
 
         <main className="flex-1 p-4 md:p-6 lg:p-7">{children}</main>
       </SidebarInset>
-      <GlobalSearchCommand open={searchOpen} onOpenChange={setSearchOpen} />
     </>
   );
 }
